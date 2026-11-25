@@ -1,0 +1,16 @@
+[package]
+name = "rbtop"
+version = "0.1.0"
+edition = "2021"
+description = "bashtop rewritten in Rust - fast resource monitor with the original key bindings"
+license = "Apache-2.0"
+
+[dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
