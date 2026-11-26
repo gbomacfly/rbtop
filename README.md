@@ -5,6 +5,15 @@ gleiches Layout, **gleiche Tastenbelegung**, gleiches Config- und Theme-Format, 
 Bruchteil der CPU-Last. Dazu kommen die umsetzbaren Feature-Requests aus den GitHub-Issues
 des Originals.
 
+> [!WARNING]
+> **Komplett „vibe-gecoded“.** Der gesamte Code, die Tests und diese README wurden von
+> einer KI (Claude, Anthropic) geschrieben. Gebaut und getestet wurde automatisiert in
+> einer Sandbox und anschließend auf echten Systemen, aber **kein Mensch hat den Code
+> Zeile für Zeile reviewt**. rbtop läuft meist als root und kann Signale an beliebige
+> Prozesse schicken (`t`/`k`/`i`/`p`), also mit entsprechender Vorsicht benutzen.
+> Benutzung auf eigene Gefahr, siehe [LICENSE](LICENSE). Bugs und Reviews sind als Issue
+> willkommen.
+
 ![rbtop](docs/screenshot.png)
 
 Abhängigkeiten: nur das `libc`-Crate. Kein TUI-Framework, kein psutil, keine
