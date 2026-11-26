@@ -63,6 +63,14 @@ pub struct Cpu {
 }
 
 pub fn shorten_model(m: &str) -> String {
+    // Generic virtual CPU models (Proxmox/QEMU default cpu types)
+    let lower = m.to_ascii_lowercase();
+    if lower.starts_with("qemu virtual cpu") {
+        return "QEMU vCPU".into();
+    }
+    if lower.contains("common kvm processor") || lower.starts_with("kvm virtual") {
+        return "KVM vCPU".into();
+    }
     let mut s = m.to_string();
     for pat in ["(R)", "(r)", "(TM)", "(tm)", "CPU", "Processor", "Core", "Intel", "AMD", "Technology", "with Radeon Graphics", "Radeon Graphics", "-Core", "Six", "Eight", "Quad", "Twelve", "Sixteen", "Dual"] {
         s = s.replace(pat, " ");
@@ -994,6 +1002,13 @@ impl Gpus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cpu_models() {
+        assert_eq!(shorten_model("QEMU Virtual CPU version 2.5+"), "QEMU vCPU");
+        assert_eq!(shorten_model("Common KVM processor"), "KVM vCPU");
+        assert_eq!(shorten_model("AMD Ryzen 7 5700G with Radeon Graphics"), "Ryzen 7 5700G");
+        assert_eq!(shorten_model("Intel(R) Core(TM) i5-2400 CPU @ 3.10GHz"), "i5-2400");
+    }
     #[test]
     fn disk_names() {
         assert_eq!(disk_name("/"), "root");

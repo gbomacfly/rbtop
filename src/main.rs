@@ -846,16 +846,21 @@ impl App {
         };
         let hy = r.y + 1;
         let sortk = self.cfg.proc_sorting.as_str();
-        let hc = |k: &str| if sortk == k || (k == "cpu" && sortk.starts_with("cpu")) { (hi, true) } else { (title, true) };
+        // Sorted column: accent colour, bold, with direction arrow (▲ ascending, ▼ descending)
+        let numeric_desc = matches!(sortk, "threads" | "memory" | "cpu lazy" | "cpu responsive");
+        let arrow = if numeric_desc != self.cfg.proc_reversed { "▼" } else { "▲" };
+        let accent = self.th.proc_misc;
+        let is_sorted = |k: &str| sortk == k || (k == "cpu" && sortk.starts_with("cpu"));
         let mut cx = x0;
         let mut hbtn: Vec<(i32, i32, u8)> = Vec::with_capacity(7);
         let mut header = |s: &mut Screen, txt: &str, w: i32, key: &str, right: bool, col: u8| {
             if w <= 0 {
                 return;
             }
-            let (c, b) = hc(key);
-            let t = if right { rpad(txt, w as usize - 1) + " " } else { pad(txt, w as usize) };
-            s.text(cx, hy, &t, c, b);
+            let sorted = is_sorted(key);
+            let label = if sorted { format!("{}{}", txt.trim_end_matches(':'), arrow) } else { txt.to_string() };
+            let t = if right { rpad(&label, w as usize - 1) + " " } else { pad(&label, w as usize) };
+            s.text(cx, hy, &t, if sorted { accent } else { title }, true);
             hbtn.push((cx, w, col));
             cx += w;
         };
