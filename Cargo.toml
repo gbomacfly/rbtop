@@ -1,6 +1,6 @@
 [package]
 name = "rbtop"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "bashtop rewritten in Rust - fast resource monitor with the original key bindings"
 license = "Apache-2.0"

@@ -324,6 +324,8 @@ pub enum Key {
     CtrlC,
     CtrlZ,
     MouseDown(u16, u16),
+    /// Internal: click on a process column header (index into the header list).
+    SortCol(u8),
     WheelUp(u16, u16),
     WheelDown(u16, u16),
 }

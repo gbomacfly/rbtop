@@ -68,6 +68,7 @@ Mit `rbtop -d` siehst du die Zeiten für Sammeln/Zeichnen live in der Prozessbox
 | Z, z | Download/Upload-Summen zurücksetzen (#63) |
 | Ctrl-Z | rbtop in den Hintergrund (`fg` holt es zurück) |
 | Maus | Scrollen und Klicken in der Prozessliste (Klick auf ausgewählte Zeile = Details), alle `┤…├`-Buttons sind klickbar |
+| Maus auf Spaltenkopf | Nach dieser Spalte sortieren, erneuter Klick kehrt die Reihenfolge um (bei Cpu% bleibt lazy/responsive erhalten) |
 
 Im Signal-Dialog gibt es zusätzlich **[ +Tree ]**: schickt das Signal an den Prozess und
 alle seine Nachfahren (Wunsch aus #185, z. B. Blender-Renderjobs pausieren).

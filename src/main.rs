@@ -112,6 +112,7 @@ const HELP: &[(&str, &str)] = &[
     ("(Z, z)", "Reset network download/upload totals (#63)."),
     ("(Ctrl-Z)", "Suspend rbtop to shell (fg to resume)."),
     ("Mouse", "Scroll/click in process list, click buttons."),
+    ("Mouse header", "Click a column title to sort, again to reverse."),
     ("Filter", "Matches pid, name, args, user, container."),
     ("", ""),
     ("", "Rust rewrite of bashtop by aristocratos:"),
@@ -842,23 +843,30 @@ impl App {
         let sortk = self.cfg.proc_sorting.as_str();
         let hc = |k: &str| if sortk == k || (k == "cpu" && sortk.starts_with("cpu")) { (hi, true) } else { (title, true) };
         let mut cx = x0;
-        let mut header = |s: &mut Screen, txt: &str, w: i32, key: &str, right: bool| {
+        let mut hbtn: Vec<(i32, i32, u8)> = Vec::with_capacity(7);
+        let mut header = |s: &mut Screen, txt: &str, w: i32, key: &str, right: bool, col: u8| {
             if w <= 0 {
                 return;
             }
             let (c, b) = hc(key);
             let t = if right { rpad(txt, w as usize - 1) + " " } else { pad(txt, w as usize) };
             s.text(cx, hy, &t, c, b);
+            hbtn.push((cx, w, col));
             cx += w;
         };
         let s = &mut self.scr;
-        header(s, "Pid:", pid_w, "pid", false);
-        header(s, if tree { "Tree:" } else { "Program:" }, prog_w, "program", false);
-        header(s, "Arguments:", args_w, "arguments", false);
-        header(s, "Threads:", thr_w, "threads", false);
-        header(s, "User:", user_w, "user", false);
-        header(s, "Mem%", mem_w, "memory", true);
-        header(s, "Cpu%", cpu_w, "cpu", true);
+        header(s, "Pid:", pid_w, "pid", false, 0);
+        header(s, if tree { "Tree:" } else { "Program:" }, prog_w, "program", false, 1);
+        header(s, "Arguments:", args_w, "arguments", false, 2);
+        header(s, "Threads:", thr_w, "threads", false, 3);
+        header(s, "User:", user_w, "user", false, 4);
+        header(s, "Mem%", mem_w, "memory", true, 5);
+        header(s, "Cpu%", cpu_w, "cpu", true, 6);
+        // column headers are clickable: sort by column, click again to reverse
+        for (x, w, col) in hbtn {
+            self.buttons.push(Button { x, w, y: hy, key: Key::SortCol(col) });
+        }
+        let s = &mut self.scr;
 
         // rows
         let rows = &self.procs.rows;
@@ -1455,6 +1463,21 @@ impl App {
                 let i = SORTINGS.iter().position(|s| *s == self.cfg.proc_sorting).unwrap_or(6) as i32;
                 let d = if lower(k) == Key::Right { 1 } else { -1 };
                 self.cfg.proc_sorting = SORTINGS[(i + d).rem_euclid(SORTINGS.len() as i32) as usize].to_string();
+                self.rows_dirty = true;
+            }
+            Key::SortCol(col) => {
+                let cur = self.cfg.proc_sorting.clone();
+                let want = match col {
+                    6 if cur.starts_with("cpu") => cur.clone(),
+                    6 => "cpu lazy".to_string(),
+                    c => SORTINGS[(c as usize).min(5)].to_string(),
+                };
+                if want == cur {
+                    self.cfg.proc_reversed = !self.cfg.proc_reversed;
+                } else {
+                    self.cfg.proc_sorting = want;
+                    self.cfg.proc_reversed = false;
+                }
                 self.rows_dirty = true;
             }
             Key::Char('b') => self.net.switch(-1),
