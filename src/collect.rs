@@ -405,6 +405,7 @@ impl Mem {
 pub struct Disk {
     pub name: String,
     pub mount: String,
+    dev: String,
     pub total: u64,
     pub used: u64,
     pub free: u64,
@@ -462,7 +463,6 @@ impl Disks {
     fn scan(&mut self) {
         let Ok(mounts) = std::fs::read_to_string("/proc/mounts") else { return };
         let mut new: Vec<Disk> = Vec::new();
-        let mut seen_dev: Vec<String> = Vec::new();
         for l in mounts.lines() {
             let mut it = l.split_ascii_whitespace();
             let (Some(dev), Some(mnt), Some(fs)) = (it.next(), it.next(), it.next()) else { continue };
@@ -476,16 +476,24 @@ impl Disks {
             if dev.starts_with("/dev/loop") {
                 continue;
             }
-            if seen_dev.iter().any(|d| d == dev) {
-                continue;
-            }
             if !self.passes(&mnt) {
                 continue;
             }
-            seen_dev.push(dev.to_string());
-            // keep io state of existing entries
-            if let Some(pos) = self.list.iter().position(|d| d.mount == mnt) {
-                new.push(self.list.swap_remove(pos));
+            // Same device mounted twice (bind mounts, OMV's /srv/dev-disk-by-*):
+            // keep one entry, under the most readable mountpoint.
+            if let Some(d) = new.iter_mut().find(|d| d.dev == dev) {
+                if mount_rank(&mnt) < mount_rank(&d.mount) {
+                    d.name = disk_name(&mnt);
+                    d.mount = mnt;
+                }
+                continue;
+            }
+            // keep io state of existing entries (matched by device, not mountpoint)
+            if let Some(pos) = self.list.iter().position(|d| d.dev == dev) {
+                let mut d = self.list.swap_remove(pos);
+                d.name = disk_name(&mnt);
+                d.mount = mnt;
+                new.push(d);
                 continue;
             }
             let (io_dev, zfs_objset) = if fs == "zfs" {
@@ -494,8 +502,7 @@ impl Disks {
                 let canon = std::fs::canonicalize(dev).ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()));
                 (canon.or_else(|| dev.rsplit('/').next().map(String::from)), None)
             };
-            let name = if mnt == "/" { "root".to_string() } else { mnt.rsplit('/').next().unwrap_or(&mnt).to_string() };
-            new.push(Disk { name, mount: mnt, total: 0, used: 0, free: 0, used_pct: 0.0, io_dev, zfs_objset, prev_rw: None, read_bps: 0.0, write_bps: 0.0 });
+            new.push(Disk { name: disk_name(&mnt), mount: mnt, dev: dev.to_string(), total: 0, used: 0, free: 0, used_pct: 0.0, io_dev, zfs_objset, prev_rw: None, read_bps: 0.0, write_bps: 0.0 });
         }
         // root first, rest in mount order
         if let Some(pos) = new.iter().position(|d| d.mount == "/") {
@@ -566,6 +573,34 @@ impl Disks {
             }
         }
     }
+}
+
+/// Display name for a mountpoint. OpenMediaVault-style `/srv/dev-disk-by-label-raid`
+/// becomes `raid`, `/srv/dev-disk-by-uuid-1a2b3c4d-...` becomes `uuid-1a2b3c4d`.
+pub fn disk_name(mnt: &str) -> String {
+    if mnt == "/" {
+        return "root".into();
+    }
+    let base = mnt.trim_end_matches('/').rsplit('/').next().unwrap_or(mnt);
+    if let Some(r) = base.strip_prefix("dev-disk-by-") {
+        if let Some(l) = r.strip_prefix("label-") {
+            return l.to_string();
+        }
+        if let Some(u) = r.strip_prefix("uuid-") {
+            return format!("uuid-{}", u.chars().take(8).collect::<String>());
+        }
+        if let Some(i) = r.strip_prefix("id-") {
+            return i.to_string();
+        }
+        return r.to_string();
+    }
+    base.to_string()
+}
+
+/// Lower is nicer: prefer a plain mountpoint over /srv/dev-disk-by-* and deep paths.
+fn mount_rank(mnt: &str) -> usize {
+    let by_dev = if mnt.contains("/dev-disk-by-") { 100 } else { 0 };
+    by_dev + mnt.matches('/').count()
 }
 
 fn find_zfs_objset(dataset: &str) -> Option<String> {
@@ -953,5 +988,20 @@ impl Gpus {
                 libc::waitpid(pid, std::ptr::null_mut(), 0);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn disk_names() {
+        assert_eq!(disk_name("/"), "root");
+        assert_eq!(disk_name("/mnt/NVME2TB"), "NVME2TB");
+        assert_eq!(disk_name("/srv/dev-disk-by-label-raid"), "raid");
+        assert_eq!(disk_name("/srv/dev-disk-by-uuid-1a2b3c4d-5e6f-7a8b-9c0d-112233445566"), "uuid-1a2b3c4d");
+        assert_eq!(disk_name("/srv/dev-disk-by-id-ata-WDC_WD120"), "ata-WDC_WD120");
+        assert!(mount_rank("/mnt/raid") < mount_rank("/srv/dev-disk-by-label-raid"));
+        assert!(mount_rank("/data") < mount_rank("/mnt/data/sub"));
     }
 }

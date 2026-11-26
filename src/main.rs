@@ -332,6 +332,11 @@ impl App {
         let th = &self.th;
         let up = format!("up {}", fmt_duration(self.cpu.uptime));
         tag(s, r.x + r.w - up.len() as i32 - 4, r.y + r.h - 1, cbox, &[(&up, th.title, false)]);
+        // -d: timings on the cpu box bottom border (free space, covers nothing)
+        if self.debug {
+            let dbg = format!("collect {}µs procs {}µs draw {}µs", self.collect_us, self.procs.collect_us, self.draw_us);
+            tag(s, r.x + 2, r.y + r.h - 1, cbox, &[(&dbg, 0xffff00, false)]);
+        }
 
         // graph area (upper normal, lower mirrored like bashtop)
         let c = lay.cin;
@@ -553,10 +558,10 @@ impl App {
                 String::new()
             };
             let namew = (w - size.len() as i32 - 1).max(4);
-            s.text_max(x, y, &d.name, (namew as usize).min(12), th.title, true);
+            s.text_max(x, y, &d.name, (namew as usize).min(20), th.title, true);
             if w >= 30 && !io.is_empty() && per >= 2 {
                 let ix = x + w - size.len() as i32 - 1 - io.len() as i32;
-                if ix > x + d.name.chars().count().min(12) as i32 {
+                if ix > x + d.name.chars().count().min(20) as i32 {
                     s.text(ix, y, &io, th.inactive_fg.max(0x606060), false);
                 }
             }
@@ -943,10 +948,6 @@ impl App {
         let count = format!(" {}/{} ", self.sel.map(|s| s + 1).unwrap_or(0), n);
         let s = &mut self.scr;
         tag(s, r.x + r.w - count.len() as i32 - 3, by, pb, &[(&count, title, false)]);
-        if self.debug {
-            let dbg = format!("collect {}µs procs {}µs draw {}µs", self.collect_us, self.procs.collect_us, self.draw_us);
-            tag(s, r.x + 2, r.y + r.h - 2, pb, &[(&dbg, 0xffff00, false)]);
-        }
     }
 
     // ------------------------------------------------------------- overlays
