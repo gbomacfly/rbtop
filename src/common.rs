@@ -115,6 +115,18 @@ pub fn parse_procargs2(data: &[u8]) -> (String, usize) {
     join_argv(parts.into_iter())
 }
 
+/// Evenly spaced subset of at most `max` elements (first and last included).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn thin<T: Clone>(v: &[T], max: usize) -> Vec<T> {
+    if v.len() <= max || max == 0 {
+        return if max == 0 { Vec::new() } else { v.to_vec() };
+    }
+    if max == 1 {
+        return vec![v[0].clone()];
+    }
+    (0..max).map(|i| v[i * (v.len() - 1) / (max - 1)].clone()).collect()
+}
+
 // ---- SMC helpers (macOS temperatures); pure functions so they are unit-tested everywhere
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -181,6 +193,14 @@ mod tests {
         assert_eq!(&cmd[at..], "");
         let (cmd, at) = join_argv(std::iter::empty());
         assert_eq!((cmd.as_str(), at), ("", 0));
+    }
+    #[test]
+    fn thin_subset() {
+        let v: Vec<u32> = (0..30).collect();
+        assert_eq!(thin(&v, 6), vec![0, 5, 11, 17, 23, 29]);
+        assert_eq!(thin(&v[..4], 6), vec![0, 1, 2, 3]);
+        assert_eq!(thin(&v, 1), vec![0]);
+        assert!(thin(&v, 0).is_empty());
     }
     #[test]
     fn smc_helpers() {

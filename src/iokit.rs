@@ -14,7 +14,7 @@
 
 #![allow(non_upper_case_globals, non_camel_case_types, clippy::upper_case_acronyms)]
 
-use crate::common::{decode_smc, fourcc, fourcc_str};
+use crate::common::{decode_smc, fourcc, fourcc_str, thin};
 use std::ffi::{c_char, c_void, CStr, CString};
 
 // ------------------------------------------------------------- CoreFoundation
@@ -254,8 +254,13 @@ pub struct BatteryReading {
     pub status: &'static str,
 }
 
+/// The battery, if one is actually installed. Desktop Macs (Mac mini, Studio)
+/// also publish an AppleSmartBattery service, but with BatteryInstalled = No.
 pub fn battery_service() -> Option<IoObj> {
-    first_service("AppleSmartBattery")
+    let b = first_service("AppleSmartBattery")?;
+    let installed = cf_to_bool(property(b.0, "BatteryInstalled").0)
+        .unwrap_or_else(|| cf_to_i64(property(b.0, "DesignCapacity").0).unwrap_or(0) > 0);
+    installed.then_some(b)
 }
 
 pub fn battery_reading(b: &IoObj) -> Option<BatteryReading> {
@@ -317,6 +322,8 @@ struct KeyData {
 const _: () = assert!(std::mem::size_of::<KeyData>() == 80);
 
 const SMC_HANDLE_YPC_EVENT: u32 = 2;
+const SMC_MAX_CPU_KEYS: usize = 6;
+const SMC_MAX_GPU_KEYS: usize = 3;
 const SMC_READ_KEY: u8 = 5;
 const SMC_GET_KEY_FROM_INDEX: u8 = 8;
 const SMC_GET_KEY_INFO: u8 = 9;
@@ -413,6 +420,10 @@ impl Smc {
         if self.cpu.is_empty() {
             self.cpu = intel;
         }
+        // Every key costs an IOConnect round trip per tick. Apple Silicon has
+        // dozens of cpu sensors; an evenly spread subset gives the same average.
+        self.cpu = thin(&self.cpu, SMC_MAX_CPU_KEYS);
+        self.gpu = thin(&self.gpu, SMC_MAX_GPU_KEYS);
     }
 
     fn avg(&self, keys: &[(u32, u32, u32)]) -> Option<f32> {
