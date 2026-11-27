@@ -1,37 +1,13 @@
-//! System collectors: cpu, sensors, memory/zram, disks (incl. ZFS io), network,
+//! Linux system collectors: cpu, sensors, memory/zram, disks (incl. ZFS io), network,
 //! battery, gpu. Everything reads /proc and /sys directly with reused buffers;
 //! no external commands except an optional single long-running nvidia-smi.
 
+pub use crate::common::{push, read_num, read_str, read_to, shorten_model, HIST};
 use std::collections::VecDeque;
 use std::fs::File;
-use std::io::{BufRead, Read};
+use std::io::BufRead;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-
-pub const HIST: usize = 600;
-
-pub fn read_to(path: &str, buf: &mut String) -> bool {
-    buf.clear();
-    match File::open(path) {
-        Ok(mut f) => f.read_to_string(buf).is_ok(),
-        Err(_) => false,
-    }
-}
-
-pub fn read_str(path: &str) -> Option<String> {
-    std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
-}
-
-pub fn read_num(path: &str) -> Option<f64> {
-    read_str(path).and_then(|s| s.parse().ok())
-}
-
-pub fn push<T>(h: &mut VecDeque<T>, v: T) {
-    if h.len() >= HIST {
-        h.pop_front();
-    }
-    h.push_back(v);
-}
 
 // ======================================================================= CPU
 
@@ -60,27 +36,6 @@ pub struct Cpu {
     pub temp_hist: Vec<VecDeque<f32>>, // [0] pkg, [1..] per thread (percent of crit)
     pub jiffies_total: u64,             // sum of all-cpu jiffies delta (for proc %)
     buf: String,
-}
-
-pub fn shorten_model(m: &str) -> String {
-    // Generic virtual CPU models (Proxmox/QEMU default cpu types)
-    let lower = m.to_ascii_lowercase();
-    if lower.starts_with("qemu virtual cpu") {
-        return "QEMU vCPU".into();
-    }
-    if lower.contains("common kvm processor") || lower.starts_with("kvm virtual") {
-        return "KVM vCPU".into();
-    }
-    let mut s = m.to_string();
-    for pat in ["(R)", "(r)", "(TM)", "(tm)", "CPU", "Processor", "Core", "Intel", "AMD", "Technology", "with Radeon Graphics", "Radeon Graphics", "-Core", "Six", "Eight", "Quad", "Twelve", "Sixteen", "Dual"] {
-        s = s.replace(pat, " ");
-    }
-    if let Some(i) = s.find('@') {
-        s.truncate(i);
-    }
-    let words: Vec<&str> = s.split_whitespace().filter(|w| !w.ends_with("-Core")).collect();
-    let out = words.join(" ");
-    if out.is_empty() { m.trim().to_string() } else { out }
 }
 
 impl Cpu {
@@ -413,6 +368,8 @@ impl Mem {
 pub struct Disk {
     pub name: String,
     pub mount: String,
+    /// io rates available for this disk
+    pub io: bool,
     dev: String,
     pub total: u64,
     pub used: u64,
@@ -510,7 +467,8 @@ impl Disks {
                 let canon = std::fs::canonicalize(dev).ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()));
                 (canon.or_else(|| dev.rsplit('/').next().map(String::from)), None)
             };
-            new.push(Disk { name: disk_name(&mnt), mount: mnt, dev: dev.to_string(), total: 0, used: 0, free: 0, used_pct: 0.0, io_dev, zfs_objset, prev_rw: None, read_bps: 0.0, write_bps: 0.0 });
+            let io = io_dev.is_some() || zfs_objset.is_some();
+            new.push(Disk { name: disk_name(&mnt), mount: mnt, io, dev: dev.to_string(), total: 0, used: 0, free: 0, used_pct: 0.0, io_dev, zfs_objset, prev_rw: None, read_bps: 0.0, write_bps: 0.0 });
         }
         // root first, rest in mount order
         if let Some(pos) = new.iter().position(|d| d.mount == "/") {
@@ -1002,13 +960,6 @@ impl Gpus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn cpu_models() {
-        assert_eq!(shorten_model("QEMU Virtual CPU version 2.5+"), "QEMU vCPU");
-        assert_eq!(shorten_model("Common KVM processor"), "KVM vCPU");
-        assert_eq!(shorten_model("AMD Ryzen 7 5700G with Radeon Graphics"), "Ryzen 7 5700G");
-        assert_eq!(shorten_model("Intel(R) Core(TM) i5-2400 CPU @ 3.10GHz"), "i5-2400");
-    }
     #[test]
     fn disk_names() {
         assert_eq!(disk_name("/"), "root");

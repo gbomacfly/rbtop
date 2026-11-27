@@ -1,7 +1,14 @@
-//! rbtop — bashtop rewritten in Rust.
+//! rbtop — bashtop rewritten in Rust (Linux and macOS).
 //! Same layout, same keys, same theme/config format; a fraction of the CPU.
 
+mod common;
+#[cfg(target_os = "linux")]
 mod collect;
+#[cfg(target_os = "macos")]
+#[path = "collect_macos.rs"]
+mod collect;
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+compile_error!("rbtop supports Linux and macOS only");
 mod config;
 mod draw;
 mod procs;
@@ -552,7 +559,7 @@ impl App {
                 break;
             }
             let size = fmt_short(d.total as f64);
-            let io = if d.read_bps > 0.0 || d.write_bps > 0.0 || per >= 2 {
+            let io = if d.io && (d.read_bps > 0.0 || d.write_bps > 0.0 || per >= 2) {
                 format!("r:{} w:{}", fmt_short(d.read_bps), fmt_short(d.write_bps))
             } else {
                 String::new()

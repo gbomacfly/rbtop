@@ -331,10 +331,18 @@ pub enum Key {
 }
 
 /// Wait up to `ms` for input. Returns true if stdin is readable.
+/// select() instead of poll(): macOS poll() does not support tty devices
+/// (it returns POLLNVAL), select() works on both Linux and macOS.
 pub fn poll_input(ms: i32) -> bool {
-    let mut fds = libc::pollfd { fd: 0, events: libc::POLLIN, revents: 0 };
-    let r = unsafe { libc::poll(&mut fds, 1, ms.max(0)) };
-    r > 0 && (fds.revents & libc::POLLIN) != 0
+    let ms = ms.max(0);
+    unsafe {
+        let mut set: libc::fd_set = std::mem::zeroed();
+        libc::FD_ZERO(&mut set);
+        libc::FD_SET(0, &mut set);
+        let mut tv = libc::timeval { tv_sec: (ms / 1000) as libc::time_t, tv_usec: ((ms % 1000) * 1000) as libc::suseconds_t };
+        let r = libc::select(1, &mut set, std::ptr::null_mut(), std::ptr::null_mut(), &mut tv);
+        r > 0 && libc::FD_ISSET(0, &set)
+    }
 }
 
 pub fn read_keys(out: &mut Vec<Key>) {

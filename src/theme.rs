@@ -126,7 +126,9 @@ pub fn theme_dirs() -> Vec<PathBuf> {
     }
     for p in ["/usr/local/share/rbtop/themes", "/usr/share/rbtop/themes", "/usr/local/share/bashtop/themes",
         "/usr/share/bashtop/themes", "/usr/local/share/bpytop/themes", "/usr/share/bpytop/themes",
-        "/usr/local/share/btop/themes", "/usr/share/btop/themes"] {
+        "/usr/local/share/btop/themes", "/usr/share/btop/themes",
+        // Homebrew on Apple Silicon
+        "/opt/homebrew/share/rbtop/themes", "/opt/homebrew/share/bpytop/themes", "/opt/homebrew/share/btop/themes"] {
         v.push(PathBuf::from(p));
     }
     // themes/ next to the binary (portable install)

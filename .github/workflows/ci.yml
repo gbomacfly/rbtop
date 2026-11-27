@@ -7,14 +7,20 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --release
       - run: cargo build --release
+      # smoke test: binary starts and prints its version
+      - run: ./target/release/rbtop --version
 
-  release:
+  release-linux:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: test
     runs-on: ubuntu-latest
@@ -33,6 +39,35 @@ jobs:
           cp target/${{ matrix.target }}/release/rbtop dist/
           cp -r themes README.md LICENSE dist/
           tar czf rbtop-${{ github.ref_name }}-${{ matrix.target }}.tar.gz -C dist .
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: rbtop-*.tar.gz
+
+  release-macos:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: cargo build --release --target aarch64-apple-darwin
+      - run: cargo build --release --target x86_64-apple-darwin
+      - run: |
+          for t in aarch64-apple-darwin x86_64-apple-darwin universal-apple-darwin; do
+            mkdir -p dist-$t
+            cp -r themes README.md LICENSE dist-$t/
+          done
+          cp target/aarch64-apple-darwin/release/rbtop dist-aarch64-apple-darwin/
+          cp target/x86_64-apple-darwin/release/rbtop dist-x86_64-apple-darwin/
+          lipo -create -output dist-universal-apple-darwin/rbtop \
+            target/aarch64-apple-darwin/release/rbtop target/x86_64-apple-darwin/release/rbtop
+          for t in aarch64-apple-darwin x86_64-apple-darwin universal-apple-darwin; do
+            tar czf rbtop-${{ github.ref_name }}-$t.tar.gz -C dist-$t .
+          done
       - uses: softprops/action-gh-release@v2
         with:
           files: rbtop-*.tar.gz

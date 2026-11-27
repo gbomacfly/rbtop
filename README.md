@@ -99,22 +99,55 @@ alle seine Nachfahren (Wunsch aus #185, z. B. Blender-Renderjobs pausieren).
 | #230 | Weitere Themes | ✅ lädt alle bashtop/bpytop/btop-`.theme`-Dateien unverändert, 9 Original-Themes liegen bei |
 | #93 | Box mit eigenem Kommando (tail -f …) | ❌ nicht umgesetzt |
 | #231 | Ausgabe auf freie VT umleiten | ❌ nicht nötig: `openvt -s -- rbtop` |
-| #235 | Windows | ❌ (Linux-only, liest `/proc` und `/sys`) |
+| #235 | Windows | ❌ (Linux und macOS, siehe unten) |
 
 Nicht betroffen von Original-Bug #234 (Hänger bei `°C` in der sensors-Ausgabe), weil
 rbtop die hwmon-Werte direkt aus `/sys` liest statt `sensors` zu parsen.
 
 ## Build & Installation
 
-Linux, Rust ≥ 1.77:
+Linux oder macOS, Rust ≥ 1.77:
 
 ```sh
 cargo build --release          # → target/release/rbtop
 sudo make install              # /usr/local/bin/rbtop + /usr/local/share/rbtop/themes
 ```
 
-Fertige Binaries (x86_64 und aarch64, glibc und statisch mit musl) baut die
-GitHub-Action bei jedem Tag `v*` und hängt sie an das Release.
+Fertige Binaries baut die GitHub-Action bei jedem Tag `v*` und hängt sie an das Release:
+
+- Linux: x86_64 und aarch64, jeweils glibc und statisch mit musl
+- macOS: `aarch64-apple-darwin` (Apple Silicon), `x86_64-apple-darwin` (Intel) und
+  `universal-apple-darwin` (beides in einer Datei)
+
+## macOS
+
+Seit 0.2.0 läuft rbtop auch auf macOS, mit derselben Oberfläche, denselben Tasten und
+derselben Config. Die Daten kommen aus den nativen Schnittstellen statt aus `/proc`:
+
+| Bereich | Quelle unter macOS |
+|---|---|
+| CPU pro Kern, Load | Mach `host_processor_info`, `getloadavg` |
+| Speicher, Swap | `host_statistics64` (Werte wie in der Aktivitätsanzeige), `vm.swapusage` |
+| Prozesse | `libproc` (`proc_pidinfo`), Kommandozeile über `sysctl KERN_PROCARGS2` |
+| Prozess-I/O (Detailansicht) | `proc_pid_rusage` |
+| Netzwerk | `sysctl NET_RT_IFLIST2` (64-Bit-Zähler) |
+| Disks | `getmntinfo`: `/` als `root`, `/System/Volumes/Data` als `data`, externe Volumes |
+
+**Noch nicht auf macOS** (geplant als zweiter Schritt über IOKit): Temperaturen,
+Disk-I/O-Raten, Akku, GPU. Container gibt es unter macOS nicht.
+
+Hinweise:
+
+- **`sudo rbtop`** zeigt CPU, Speicher und Threads aller Prozesse. Ohne root liefert macOS
+  für Prozesse anderer Benutzer nur Name, Benutzer, Status und Startzeit; dort stehen
+  CPU und Speicher dann auf 0.
+- Das **Netzwerkgerät** beim Start ist das mit dem meisten Traffic (meist `en0`);
+  wechseln wie gewohnt mit `b`/`n` oder fest über `net_device`.
+- **Terminal:** rbtop nutzt 24-Bit-Farben. Mit iTerm2, Ghostty, WezTerm oder kitty
+  passt alles. Wenn die Farben im Terminal.app von macOS falsch aussehen, liegt das
+  an fehlender Truecolor-Unterstützung der installierten Version.
+- Per **Browser** geladene Binaries markiert macOS als „aus dem Internet“; dann einmal
+  `xattr -d com.apple.quarantine rbtop`. Mit `curl` geladene sind nicht betroffen.
 
 ## Konfiguration
 
@@ -131,15 +164,21 @@ Neu: `mem_graphs`, `show_swap`, `show_battery`, `show_gpu`, `show_containers`,
 `net_device`, `mouse`.
 
 Themes werden gesucht in `~/.config/rbtop/themes`, den Theme-Ordnern von
-bashtop/bpytop/btop, `/usr/{local/,}share/{rbtop,bashtop,bpytop,btop}/themes` und
-`themes/` neben der Binary.
+bashtop/bpytop/btop, `/usr/{local/,}share/{rbtop,bashtop,bpytop,btop}/themes`,
+`/opt/homebrew/share/{rbtop,bpytop,btop}/themes` und `themes/` neben der Binary.
 
 ## Getestet / nicht getestet
 
 Getestet in einem echten PTY: alle Tasten, Maus, Resize, 80×24 und die
 „Terminal size too small“-Meldung, Layout mit 2–128 Threads, Filter, Baum,
 Detailansicht, Signale inkl. Stop/Continue, Optionen, Themes, Config-Speicherung.
-Unit-Tests für Tastatur-Parser, cgroup→Container-Erkennung und Theme-Parser.
+Unit-Tests für Tastatur-Parser, cgroup→Container-Erkennung, Theme-Parser,
+Disk-Namen, CPU-Modellnamen und den macOS-Kommandozeilen-Parser.
+
+**macOS:** Der Code wurde in der (Linux-)Build-Umgebung gegen die echten macOS-Bindings
+für `aarch64-apple-darwin` und `x86_64-apple-darwin` kompiliert und mit Clippy geprüft,
+lief dort aber nicht. Der erste echte Lauf passiert in der CI auf `macos-latest` und
+auf deinem Mac; Abweichungen bitte als Issue melden.
 
 Mangels Hardware in der Build-Umgebung **nicht live getestet**: GPU-Anzeige, Akku,
 Temperatursensoren und die Docker/Proxmox-Namensauflösung (der cgroup-Parser ist

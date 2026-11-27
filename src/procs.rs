@@ -1,9 +1,18 @@
-//! Process collection from /proc. Hot path reads only /proc/<pid>/stat per
-//! process per tick; cmdline, uid and cgroup are read once per new pid (or on exec).
+//! Process list. Platform-independent part: cpu % (responsive + lazy), tree,
+//! filter and sorting. Reading the raw per-process values is platform code in
+//! procs/linux.rs (/proc) and procs/macos.rs (libproc + sysctl).
 
-use crate::collect::{push, read_to, HIST};
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+use linux as platform;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+use macos as platform;
+
+use crate::common::{lookup_user, push, HIST};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::os::unix::fs::MetadataExt;
 use std::time::Instant;
 
 pub struct Proc {
@@ -20,10 +29,27 @@ pub struct Proc {
     pub cpu_lazy: f32,
     pub mini: [u8; 8],
     pub nice: i32,
+    /// start time in clk_tck units since boot
     pub start: u64,
     pub container: Option<String>,
     ticks: u64,
     gen: u32,
+}
+
+/// One raw reading of a process, borrowed from the platform sampler's buffers.
+pub struct Sample<'a> {
+    pub pid: i32,
+    pub ppid: i32,
+    pub name: &'a str,
+    pub state: char,
+    /// cpu time (user+system) in clk_tck units
+    pub ticks: u64,
+    pub nice: i32,
+    pub threads: u32,
+    pub start: u64,
+    pub rss: u64,
+    /// set if the platform gets the uid for free with the sample
+    pub uid: Option<u32>,
 }
 
 pub struct Row {
@@ -49,31 +75,13 @@ pub struct Procs {
     pub rows: Vec<Row>,
     pub detail: Option<Detail>,
     users: HashMap<u32, String>,
+    #[allow(dead_code)]
     ct_names: HashMap<String, String>,
     gen: u32,
     last: Instant,
     clk_tck: f64,
-    page: u64,
-    buf: String,
-    path: String,
-    raw: Vec<u8>,
-    proc_fd: libc::c_int,
+    sampler: platform::Sampler,
     pub collect_us: u128,
-}
-
-fn load_users() -> HashMap<u32, String> {
-    let mut m = HashMap::new();
-    if let Ok(s) = std::fs::read_to_string("/etc/passwd") {
-        for l in s.lines() {
-            let f: Vec<&str> = l.split(':').collect();
-            if f.len() > 2 {
-                if let Ok(uid) = f[2].parse() {
-                    m.entry(uid).or_insert_with(|| f[0].to_string());
-                }
-            }
-        }
-    }
-    m
 }
 
 impl Procs {
@@ -82,16 +90,12 @@ impl Procs {
             map: HashMap::with_capacity(1024),
             rows: Vec::with_capacity(1024),
             detail: None,
-            users: load_users(),
+            users: HashMap::new(),
             ct_names: HashMap::new(),
             gen: 0,
             last: Instant::now(),
-            clk_tck: unsafe { libc::sysconf(libc::_SC_CLK_TCK) }.max(1) as f64,
-            page: unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as u64,
-            buf: String::with_capacity(1024),
-            path: String::with_capacity(64),
-            raw: vec![0u8; 2048],
-            proc_fd: unsafe { libc::open(c"/proc".as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) },
+            clk_tck: platform::clk_tck(),
+            sampler: platform::Sampler::default(),
             collect_us: 0,
         }
     }
@@ -110,94 +114,13 @@ impl Procs {
         self.last = Instant::now();
         self.gen = self.gen.wrapping_add(1);
         let gen = self.gen;
-        let Ok(rd) = std::fs::read_dir("/proc") else { return };
         let div = if per_core { 1.0 } else { threads.max(1) as f64 };
-        for e in rd.flatten() {
-            let fname = e.file_name();
-            let Some(pid) = fname.to_str().and_then(|s| s.parse::<i32>().ok()) else { continue };
-            // openat() relative to the /proc dirfd: no full path walk per process
-            self.path.clear();
-            use std::fmt::Write;
-            let _ = write!(self.path, "{pid}/stat\0");
-            let n = unsafe {
-                let fd = libc::openat(self.proc_fd, self.path.as_ptr() as *const libc::c_char, libc::O_RDONLY | libc::O_CLOEXEC);
-                if fd < 0 {
-                    continue;
-                }
-                let n = libc::read(fd, self.raw.as_mut_ptr() as *mut libc::c_void, self.raw.len());
-                libc::close(fd);
-                n
-            };
-            if n <= 0 {
-                continue;
-            }
-            let Ok(stat) = std::str::from_utf8(&self.raw[..n as usize]) else { continue };
-            let (Some(l), Some(r)) = (stat.find('('), stat.rfind(')')) else { continue };
-            let name = &stat[l + 1..r];
-            let mut f = stat[r + 1..].split_ascii_whitespace();
-            let state = f.next().and_then(|s| s.chars().next()).unwrap_or('?');
-            let ppid: i32 = f.next().and_then(|x| x.parse().ok()).unwrap_or(0);
-            // fields after ppid: pgrp(0) session tty tpgid flags minflt cminflt majflt cmajflt utime(9) stime(10) cutime cstime prio nice(14) threads(15) itreal start(17) vsize rss(19)
-            let mut vals = [0i64; 20];
-            for v in vals.iter_mut() {
-                *v = f.next().and_then(|x| x.parse().ok()).unwrap_or(0);
-            }
-            let ticks = (vals[9] + vals[10]) as u64;
-            let nice = vals[14] as i32;
-            let nthreads = vals[15] as u32;
-            let start = vals[17] as u64;
-            let rss = vals[19].max(0) as u64 * self.page;
-
-            let entry = self.map.get_mut(&pid);
-            match entry {
-                Some(p) if p.start == start => {
-                    let dticks = ticks.saturating_sub(p.ticks) as f64;
-                    let c = ((dticks / (dt * self.clk_tck)) * 100.0 / div) as f32;
-                    p.cpu = c.max(0.0);
-                    p.cpu_lazy = p.cpu_lazy * 0.7 + p.cpu * 0.3;
-                    p.mini.rotate_left(1);
-                    p.mini[7] = p.cpu.min(100.0) as u8;
-                    p.ticks = ticks;
-                    p.state = state;
-                    p.ppid = ppid;
-                    p.threads = nthreads;
-                    p.rss = rss;
-                    p.nice = nice;
-                    p.mem_pct = (rss as f64 * 100.0 / mem_total as f64) as f32;
-                    p.gen = gen;
-                    if p.name != name {
-                        // exec happened
-                        p.name = name.to_string();
-                        p.cmd = read_cmdline(pid);
-                    }
-                }
-                _ => {
-                    let name = name.to_string();
-                    let uid =std::fs::metadata(format!("/proc/{pid}")).map(|m| m.uid()).unwrap_or(0);
-                    let container = if containers { self.container_of(pid) } else { None };
-                    let p = Proc {
-                        pid,
-                        ppid,
-                        name,
-                        cmd: read_cmdline(pid),
-                        uid,
-                        state,
-                        threads: nthreads,
-                        rss,
-                        mem_pct: (rss as f64 * 100.0 / mem_total as f64) as f32,
-                        cpu: 0.0,
-                        cpu_lazy: 0.0,
-                        mini: [0; 8],
-                        nice,
-                        start,
-                        container,
-                        ticks,
-                        gen,
-                    };
-                    self.map.insert(pid, p);
-                }
-            }
-        }
+        let mem_total = mem_total.max(1);
+        // The sampler is moved out so its buffers can be borrowed by the samples
+        // while the process map is updated.
+        let mut sampler = std::mem::take(&mut self.sampler);
+        sampler.each(|s| self.upsert(&s, dt, div, mem_total, containers, gen));
+        self.sampler = sampler;
         self.map.retain(|_, p| p.gen == gen);
 
         // detailed process
@@ -208,18 +131,10 @@ impl Procs {
                     push(&mut d.hist, p.cpu.min(100.0));
                     push(&mut d.mem_hist, p.mem_pct);
                     d.name = p.name.clone();
-                    if read_to(&format!("/proc/{}/io", d.pid), &mut self.buf) {
-                        let (mut r, mut w) = (None, None);
-                        for l in self.buf.lines() {
-                            if let Some(v) = l.strip_prefix("read_bytes: ") {
-                                r = v.trim().parse().ok();
-                            } else if let Some(v) = l.strip_prefix("write_bytes: ") {
-                                w = v.trim().parse().ok();
-                            }
-                        }
-                        d.io_read = r;
-                        d.io_write = w;
-                        if let (Some(r), Some(w)) = (r, w) {
+                    match platform::io_bytes(d.pid) {
+                        Some((r, w)) => {
+                            d.io_read = Some(r);
+                            d.io_write = Some(w);
                             if let Some((pr, pw, t)) = d.io_prev {
                                 let s = t.elapsed().as_secs_f64().max(0.001);
                                 d.io_rps = r.saturating_sub(pr) as f64 / s;
@@ -227,12 +142,71 @@ impl Procs {
                             }
                             d.io_prev = Some((r, w, Instant::now()));
                         }
+                        None => {
+                            d.io_read = None;
+                            d.io_write = None;
+                        }
                     }
                 }
                 None => d.alive = false,
             }
         }
         self.collect_us = t0.elapsed().as_micros();
+    }
+
+    fn upsert(&mut self, s: &Sample, dt: f64, div: f64, mem_total: u64, containers: bool, gen: u32) {
+        let mem_pct = (s.rss as f64 * 100.0 / mem_total as f64) as f32;
+        match self.map.get_mut(&s.pid) {
+            Some(p) if p.start == s.start => {
+                let dticks = s.ticks.saturating_sub(p.ticks) as f64;
+                let c = ((dticks / (dt * self.clk_tck)) * 100.0 / div) as f32;
+                p.cpu = c.max(0.0);
+                p.cpu_lazy = p.cpu_lazy * 0.7 + p.cpu * 0.3;
+                p.mini.rotate_left(1);
+                p.mini[7] = p.cpu.min(100.0) as u8;
+                p.ticks = s.ticks;
+                p.state = s.state;
+                p.ppid = s.ppid;
+                p.threads = s.threads;
+                p.rss = s.rss;
+                p.nice = s.nice;
+                p.mem_pct = mem_pct;
+                p.gen = gen;
+                if p.name != s.name {
+                    // exec happened
+                    p.name = s.name.to_string();
+                    p.cmd = platform::cmdline(s.pid);
+                }
+            }
+            _ => {
+                let uid = s.uid.unwrap_or_else(|| platform::uid_of(s.pid));
+                if !self.users.contains_key(&uid) {
+                    let n = lookup_user(uid).unwrap_or_else(|| uid.to_string());
+                    self.users.insert(uid, n);
+                }
+                let container = if containers { self.container_of(s.pid) } else { None };
+                let p = Proc {
+                    pid: s.pid,
+                    ppid: s.ppid,
+                    name: s.name.to_string(),
+                    cmd: platform::cmdline(s.pid),
+                    uid,
+                    state: s.state,
+                    threads: s.threads,
+                    rss: s.rss,
+                    mem_pct,
+                    cpu: 0.0,
+                    cpu_lazy: 0.0,
+                    mini: [0; 8],
+                    nice: s.nice,
+                    start: s.start,
+                    container,
+                    ticks: s.ticks,
+                    gen,
+                };
+                self.map.insert(s.pid, p);
+            }
+        }
     }
 
     pub fn set_detail(&mut self, pid: Option<i32>) {
@@ -251,52 +225,6 @@ impl Procs {
                 name,
             }
         });
-    }
-
-    fn container_of(&mut self, pid: i32) -> Option<String> {
-        let mut s = String::new();
-        if !read_to(&format!("/proc/{pid}/cgroup"), &mut s) {
-            return None;
-        }
-        match parse_cgroup(&s)? {
-            Ct::Docker(id) => Some(self.docker_name(&id)),
-            Ct::Podman(id) => Some(format!("podman:{}", &id[..12])),
-            Ct::Lxc(id) => Some(self.pve_name("lxc", &id, "hostname:", "CT")),
-            Ct::Qemu(id) => Some(self.pve_name("qemu-server", &id, "name:", "VM")),
-            Ct::Other(n) => Some(n.to_string()),
-        }
-    }
-
-    fn docker_name(&mut self, id: &str) -> String {
-        if let Some(n) = self.ct_names.get(id) {
-            return n.clone();
-        }
-        let mut name = format!("docker:{}", &id[..12]);
-        if let Ok(js) = std::fs::read_to_string(format!("/var/lib/docker/containers/{id}/config.v2.json")) {
-            if let Some(i) = js.find("\"Name\":\"/") {
-                let rest = &js[i + 9..];
-                if let Some(e) = rest.find('"') {
-                    name = format!("docker:{}", &rest[..e]);
-                }
-            }
-        }
-        self.ct_names.insert(id.to_string(), name.clone());
-        name
-    }
-
-    fn pve_name(&mut self, kind: &str, id: &str, key: &str, label: &str) -> String {
-        let k = format!("{kind}/{id}");
-        if let Some(n) = self.ct_names.get(&k) {
-            return n.clone();
-        }
-        let mut name = format!("{label} {id}");
-        if let Ok(conf) = std::fs::read_to_string(format!("/etc/pve/{kind}/{id}.conf")) {
-            if let Some(l) = conf.lines().find(|l| l.starts_with(key)) {
-                name = format!("{label} {id} ({})", l[key.len()..].trim());
-            }
-        }
-        self.ct_names.insert(k, name.clone());
-        name
     }
 
     /// Build display rows (filter, sort, optional tree).
@@ -398,98 +326,9 @@ impl Procs {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum Ct {
-    Docker(String),
-    Podman(String),
-    Lxc(String),
-    Qemu(String),
-    Other(&'static str),
-}
-
-/// Map a /proc/<pid>/cgroup file to a container (issue #97).
-pub fn parse_cgroup(s: &str) -> Option<Ct> {
-    let hexid = |t: &str| -> Option<String> {
-        let t: String = t.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
-        (t.len() >= 12).then_some(t)
-    };
-    for line in s.lines() {
-        let path = line.splitn(3, ':').nth(2).unwrap_or("");
-        for pre in ["docker-", "/docker/"] {
-            if let Some(i) = path.find(pre) {
-                if let Some(id) = hexid(&path[i + pre.len()..]) {
-                    return Some(Ct::Docker(id));
-                }
-            }
-        }
-        if let Some(i) = path.find("libpod-") {
-            if let Some(id) = hexid(&path[i + 7..]) {
-                return Some(Ct::Podman(id));
-            }
-        }
-        // Proxmox / LXC: /lxc/101/... or /lxc.payload.101/...
-        for pre in ["/lxc.payload.", "/lxc/"] {
-            if let Some(i) = path.find(pre) {
-                let id: String = path[i + pre.len()..].chars().take_while(|c| *c != '/').collect();
-                if !id.is_empty() {
-                    return Some(Ct::Lxc(id));
-                }
-            }
-        }
-        if let Some(i) = path.find("qemu.slice/") {
-            let id: String = path[i + 11..].chars().take_while(|c| c.is_ascii_digit()).collect();
-            if !id.is_empty() {
-                return Some(Ct::Qemu(id));
-            }
-        }
-        if path.contains("machine-qemu") {
-            return Some(Ct::Other("VM (libvirt)"));
-        }
-        if path.contains("/kubepods") {
-            return Some(Ct::Other("k8s"));
-        }
-    }
-    None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    const ID: &str = "4f2a9c1d8e7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f";
-    #[test]
-    fn cgroups() {
-        assert_eq!(parse_cgroup(&format!("0::/system.slice/docker-{ID}.scope\n")), Some(Ct::Docker(ID.into())));
-        assert_eq!(parse_cgroup(&format!("12:pids:/docker/{ID}\n")), Some(Ct::Docker(ID.into())));
-        assert_eq!(parse_cgroup(&format!("0::/machine.slice/libpod-{ID}.scope/container\n")), Some(Ct::Podman(ID.into())));
-        assert_eq!(parse_cgroup("0::/lxc/101/ns/system.slice/nginx.service\n"), Some(Ct::Lxc("101".into())));
-        assert_eq!(parse_cgroup("0::/lxc.payload.204/init.scope\n"), Some(Ct::Lxc("204".into())));
-        assert_eq!(parse_cgroup("0::/qemu.slice/105.scope\n"), Some(Ct::Qemu("105".into())));
-        assert_eq!(parse_cgroup("0::/user.slice/user-1000.slice/session-3.scope\n"), None);
-        assert_eq!(parse_cgroup("0::/init.scope\n"), None);
-    }
-}
-
-fn read_cmdline(pid: i32) -> String {
-    match std::fs::read(format!("/proc/{pid}/cmdline")) {
-        Ok(mut b) => {
-            while b.last() == Some(&0) {
-                b.pop();
-            }
-            for c in b.iter_mut() {
-                if *c == 0 || *c == b'\n' {
-                    *c = b' ';
-                }
-            }
-            String::from_utf8_lossy(&b).into_owned()
-        }
-        Err(_) => String::new(),
-    }
-}
-
-/// Fresh process state straight from /proc (for the pause/resume toggle).
+/// Fresh process state (for the pause/resume toggle).
 pub fn read_state(pid: i32) -> Option<char> {
-    let s = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    s[s.rfind(')')? + 1..].split_ascii_whitespace().next()?.chars().next()
+    platform::read_state(pid)
 }
 
 pub fn send_signal(pid: i32, sig: i32) -> Result<(), String> {
