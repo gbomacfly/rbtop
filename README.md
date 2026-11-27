@@ -121,7 +121,7 @@ Fertige Binaries baut die GitHub-Action bei jedem Tag `v*` und hängt sie an das
 
 ## macOS
 
-Seit 0.2.0 läuft rbtop auch auf macOS, mit derselben Oberfläche, denselben Tasten und
+Seit 0.2.0 läuft rbtop auch auf macOS, seit 0.3.0 mit Temperaturen, Disk-I/O, GPU und Akku, mit derselben Oberfläche, denselben Tasten und
 derselben Config. Die Daten kommen aus den nativen Schnittstellen statt aus `/proc`:
 
 | Bereich | Quelle unter macOS |
@@ -132,9 +132,14 @@ derselben Config. Die Daten kommen aus den nativen Schnittstellen statt aus `/pr
 | Prozess-I/O (Detailansicht) | `proc_pid_rusage` |
 | Netzwerk | `sysctl NET_RT_IFLIST2` (64-Bit-Zähler) |
 | Disks | `getmntinfo`: `/` als `root` und externe Volumes (das Data-Volume teilt sich bei APFS den Container mit `/` und würde nur dieselben Zahlen wiederholen) |
+| Disk-I/O | IOKit `IOBlockStorageDriver`-Statistiken; APFS-Volumes zeigen die Rate ihrer physischen SSD |
+| CPU-/GPU-Temperatur | SMC (`Tp*`/`Te*` bzw. `Tg*` auf Apple Silicon, `TC0P` auf Intel), Fallback IOHID-Sensoren |
+| GPU-Last | IOKit `IOAccelerator` „PerformanceStatistics“ |
+| Akku | IOKit `AppleSmartBattery` (nur MacBooks) |
 
-**Noch nicht auf macOS** (geplant als zweiter Schritt über IOKit): Temperaturen,
-Disk-I/O-Raten, Akku, GPU. Container gibt es unter macOS nicht.
+Die CPU-Temperatur ist der Mittelwert aller CPU-Sensoren, Werte pro Kern gibt es auf
+dem Mac nicht. Bei Apple Silicon entfällt die VRAM-Angabe, weil GPU und CPU sich den
+Speicher teilen. Container gibt es unter macOS nicht.
 
 Hinweise:
 
@@ -175,10 +180,12 @@ Detailansicht, Signale inkl. Stop/Continue, Optionen, Themes, Config-Speicherung
 Unit-Tests für Tastatur-Parser, cgroup→Container-Erkennung, Theme-Parser,
 Disk-Namen, CPU-Modellnamen und den macOS-Kommandozeilen-Parser.
 
-**macOS:** Der Code wurde in der (Linux-)Build-Umgebung gegen die echten macOS-Bindings
-für `aarch64-apple-darwin` und `x86_64-apple-darwin` kompiliert und mit Clippy geprüft,
-lief dort aber nicht. Der erste echte Lauf passiert in der CI auf `macos-latest` und
-auf deinem Mac; Abweichungen bitte als Issue melden.
+**macOS:** CPU, Speicher, Prozesse, Netz und Disks wurden auf einem Mac mini M4
+geprüft. Die IOKit-Teile (Temperaturen, Disk-I/O, GPU, Akku) sind gegen die echten
+Bindings kompiliert, die SMC-Struktur per Compile-Time-Assertion auf 80 Byte geprüft
+und die SMC-Dekodierung per Unit-Test abgedeckt; welche Sensoren ein bestimmtes
+Mac-Modell liefert, zeigt aber erst der Lauf auf dem Gerät. Abweichungen bitte als
+Issue melden.
 
 Mangels Hardware in der Build-Umgebung **nicht live getestet**: GPU-Anzeige, Akku,
 Temperatursensoren und die Docker/Proxmox-Namensauflösung (der cgroup-Parser ist

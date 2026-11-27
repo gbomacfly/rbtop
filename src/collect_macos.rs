@@ -4,12 +4,16 @@
 //! (sysctl NET_RT_IFLIST2, 64-bit counters). Same public API as the Linux
 //! collectors in collect.rs, so the UI code is shared.
 //!
-//! Not yet on macOS: temperatures, disk io rates, battery, gpu.
+//! Temperatures (SMC, HID fallback), disk io (IOBlockStorageDriver statistics),
+//! gpu load (IOAccelerator) and battery (AppleSmartBattery) come from IOKit,
+//! see iokit.rs.
 
 #![allow(deprecated)] // libc marks the mach_* functions deprecated in favour of the mach2 crate
 
 pub use crate::common::{push, shorten_model, HIST};
-use std::collections::VecDeque;
+use crate::iokit::{self, HidTemps, IoObj, Smc};
+use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::CStr;
 use std::mem::{size_of, zeroed};
 use std::time::Instant;
@@ -61,6 +65,21 @@ fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
+thread_local! {
+    /// One SMC connection for cpu and gpu temperatures; key discovery runs once.
+    static SMC: RefCell<Option<Option<Smc>>> = const { RefCell::new(None) };
+}
+
+fn with_smc<R>(f: impl FnOnce(&Smc) -> Option<R>) -> Option<R> {
+    SMC.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.is_none() {
+            *c = Some(Smc::open());
+        }
+        c.as_ref().and_then(|o| o.as_ref()).and_then(f)
+    })
+}
+
 // ======================================================================= CPU
 
 pub struct Cpu {
@@ -76,6 +95,8 @@ pub struct Cpu {
     pub temp_crit: f32,
     pub core_temps: Vec<Option<f32>>,
     boot_ms: u64,
+    hid: Option<HidTemps>,
+    temp_init: bool,
 }
 
 impl Cpu {
@@ -103,6 +124,8 @@ impl Cpu {
             temp_crit: 100.0,
             core_temps: vec![None; threads],
             boot_ms: boot_time_ms(),
+            hid: None,
+            temp_init: false,
         };
         c.collect(true);
         c
@@ -112,7 +135,19 @@ impl Cpu {
         false
     }
 
-    pub fn collect(&mut self, _check_temp: bool) {
+    pub fn collect(&mut self, check_temp: bool) {
+        if check_temp {
+            if !self.temp_init {
+                // SMC first (all Apple Silicon generations, Intel); HID as fallback
+                self.temp_init = true;
+                if with_smc(|s| s.has_cpu().then_some(())).is_none() {
+                    self.hid = HidTemps::open();
+                }
+            }
+            self.temp = with_smc(|s| s.cpu_temp()).or_else(|| self.hid.as_ref().and_then(|h| h.cpu_temp()));
+        } else {
+            self.temp = None;
+        }
         unsafe {
             let mut count: libc::natural_t = 0;
             let mut info: libc::processor_info_array_t = std::ptr::null_mut();
@@ -251,7 +286,7 @@ impl Mem {
 pub struct Disk {
     pub name: String,
     pub mount: String,
-    /// io rates available (not yet on macOS)
+    /// io rates available for this disk
     pub io: bool,
     pub total: u64,
     pub used: u64,
@@ -264,9 +299,29 @@ pub struct Disk {
 pub struct Disks {
     pub list: Vec<Disk>,
     filter: String,
+    /// bsd name -> block storage driver (None: not found, don't look again)
+    drivers: HashMap<String, Option<IoObj>>,
+    prev: HashMap<String, (u64, u64)>,
+    last_io: Instant,
 }
 
 const FS_OK: &[&str] = &["apfs", "hfs", "exfat", "msdos", "ntfs", "ufs", "zfs"];
+
+/// "disk3s1s1" -> ["disk3s1s1", "disk3s1", "disk3"]: the sealed system snapshot
+/// may not exist as its own IOMedia, so the parents are tried in turn.
+pub fn bsd_candidates(bsd: &str) -> Vec<String> {
+    let mut v = vec![bsd.to_string()];
+    let mut cur = bsd;
+    while let Some(i) = cur.rfind('s') {
+        // only strip "s<digits>" slice suffixes, never the "dis" of "disk"
+        if i <= 4 || !cur[i + 1..].chars().all(|c| c.is_ascii_digit()) || cur[i + 1..].is_empty() {
+            break;
+        }
+        cur = &cur[..i];
+        v.push(cur.to_string());
+    }
+    v
+}
 
 /// "/" -> root, "/System/Volumes/Data" -> data, "/Volumes/Backup" -> Backup
 pub fn disk_name(mnt: &str) -> String {
@@ -295,7 +350,7 @@ pub fn wanted_mount(mnt: &str, fstype: &str, dontbrowse: bool) -> bool {
 
 impl Disks {
     pub fn new(filter: &str) -> Disks {
-        let mut d = Disks { list: Vec::new(), filter: filter.to_string() };
+        let mut d = Disks { list: Vec::new(), filter: filter.to_string(), drivers: HashMap::new(), prev: HashMap::new(), last_io: Instant::now() };
         d.collect();
         d
     }
@@ -320,7 +375,7 @@ impl Disks {
 
     pub fn collect(&mut self) {
         // getmntinfo(MNT_NOWAIT) is cheap, so mounts are re-read every tick
-        let mut new: Vec<Disk> = Vec::new();
+        let mut new: Vec<(Disk, String)> = Vec::new();
         unsafe {
             let mut mnts: *mut libc::statfs = std::ptr::null_mut();
             // MNT_NOWAIT: cached values, never blocks on a hung network mount
@@ -335,14 +390,36 @@ impl Disks {
                 if !wanted_mount(&mnt, &fstype, dontbrowse) || !self.passes(&mnt) {
                     continue;
                 }
+                let from = CStr::from_ptr(s.f_mntfromname.as_ptr()).to_string_lossy().into_owned();
+                let bsd = from.strip_prefix("/dev/").unwrap_or("").to_string();
                 let bs = s.f_bsize as u64;
                 let total = s.f_blocks * bs;
                 let avail = s.f_bavail * bs;
                 let used = s.f_blocks.saturating_sub(s.f_bfree) * bs;
                 let used_pct = if used + avail > 0 { used as f32 * 100.0 / (used + avail) as f32 } else { 0.0 };
-                new.push(Disk { name: disk_name(&mnt), mount: mnt, io: false, total, used, free: avail, used_pct, read_bps: 0.0, write_bps: 0.0 });
+                new.push((Disk { name: disk_name(&mnt), mount: mnt, io: false, total, used, free: avail, used_pct, read_bps: 0.0, write_bps: 0.0 }, bsd));
             }
         }
+        // io rates: per physical driver; APFS volumes report their physical store
+        let dt = self.last_io.elapsed().as_secs_f64().max(0.001);
+        self.last_io = Instant::now();
+        let mut new: Vec<Disk> = new
+            .into_iter()
+            .map(|(mut d, bsd)| {
+                if bsd.is_empty() {
+                    return d;
+                }
+                let drv = self.drivers.entry(bsd.clone()).or_insert_with(|| bsd_candidates(&bsd).iter().find_map(|b| iokit::block_driver_for(b)));
+                if let Some((r, w)) = drv.as_ref().and_then(iokit::block_stats) {
+                    d.io = true;
+                    if let Some((pr, pw)) = self.prev.insert(bsd, (r, w)) {
+                        d.read_bps = r.saturating_sub(pr) as f64 / dt;
+                        d.write_bps = w.saturating_sub(pw) as f64 / dt;
+                    }
+                }
+                d
+            })
+            .collect();
         if let Some(pos) = new.iter().position(|d| d.mount == "/") {
             let r = new.remove(pos);
             new.insert(0, r);
@@ -503,23 +580,36 @@ impl Net {
     }
 }
 
-// ============================================================ BATTERY / GPU
-// Step 2 of the macOS port (IOKit). Present as stubs so the UI code is shared.
+// =================================================================== BATTERY
 
 pub struct Battery {
+    svc: Option<IoObj>,
     pub percent: Option<u8>,
     pub status: String,
+    last: Option<Instant>,
 }
 
 impl Battery {
     pub fn new() -> Battery {
-        Battery { percent: None, status: String::new() }
+        Battery { svc: iokit::battery_service(), percent: None, status: String::new(), last: None }
     }
     pub fn present(&self) -> bool {
-        false
+        self.svc.is_some()
     }
-    pub fn collect(&mut self) {}
+    pub fn collect(&mut self) {
+        let Some(svc) = &self.svc else { return };
+        if self.last.is_some_and(|t| t.elapsed().as_secs() < 5) {
+            return;
+        }
+        self.last = Some(Instant::now());
+        if let Some(b) = iokit::battery_reading(svc) {
+            self.percent = Some(b.percent);
+            self.status = b.status.to_string();
+        }
+    }
 }
+
+// ======================================================================= GPU
 
 #[derive(Clone, Default)]
 #[allow(dead_code)]
@@ -527,21 +617,35 @@ pub struct GpuStat {
     pub name: String,
     pub util: f32,
     pub mem_used: u64,
+    /// 0 on Apple Silicon (unified memory): the UI then hides the vram column
     pub mem_total: u64,
     pub temp: Option<f32>,
 }
 
-#[allow(dead_code)]
 pub struct Gpus {
+    accels: Vec<(IoObj, String)>,
     pub stats: Vec<GpuStat>,
     pub hist: Vec<VecDeque<f32>>,
 }
 
 impl Gpus {
-    pub fn new(_enabled: bool, _update_ms: u64) -> Gpus {
-        Gpus { stats: Vec::new(), hist: Vec::new() }
+    pub fn new(enabled: bool, _update_ms: u64) -> Gpus {
+        let accels = if enabled { iokit::gpu_accelerators().into_iter().map(|a| { let n = iokit::gpu_name(&a); (a, n) }).collect() } else { Vec::new() };
+        Gpus { accels, stats: Vec::new(), hist: Vec::new() }
     }
-    pub fn collect(&mut self) {}
+    pub fn collect(&mut self) {
+        self.stats.clear();
+        let temp = if self.accels.is_empty() { None } else { with_smc(|s| s.gpu_temp()) };
+        for (a, name) in &self.accels {
+            if let Some(r) = iokit::gpu_reading(a) {
+                self.stats.push(GpuStat { name: name.clone(), util: r.util, mem_used: r.mem_used, mem_total: 0, temp });
+            }
+        }
+        self.hist.resize_with(self.stats.len(), || VecDeque::with_capacity(HIST));
+        for (h, s) in self.hist.iter_mut().zip(&self.stats) {
+            push(h, s.util);
+        }
+    }
     pub fn shutdown(&mut self) {}
 }
 
@@ -559,5 +663,8 @@ mod tests {
         assert!(!wanted_mount("/dev", "devfs", false));
         assert_eq!(disk_name("/System/Volumes/Data"), "data");
         assert_eq!(disk_name("/Volumes/Backup"), "Backup");
+        assert_eq!(bsd_candidates("disk3s1s1"), ["disk3s1s1", "disk3s1", "disk3"]);
+        assert_eq!(bsd_candidates("disk5s2"), ["disk5s2", "disk5"]);
+        assert_eq!(bsd_candidates("disk12"), ["disk12"]);
     }
 }

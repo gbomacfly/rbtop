@@ -115,6 +115,33 @@ pub fn parse_procargs2(data: &[u8]) -> (String, usize) {
     join_argv(parts.into_iter())
 }
 
+// ---- SMC helpers (macOS temperatures); pure functions so they are unit-tested everywhere
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn fourcc(s: &str) -> u32 {
+    let b = s.as_bytes();
+    let g = |i: usize| *b.get(i).unwrap_or(&b' ') as u32;
+    (g(0) << 24) | (g(1) << 16) | (g(2) << 8) | g(3)
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn fourcc_str(k: u32) -> String {
+    k.to_be_bytes().iter().map(|&c| if c.is_ascii_graphic() || c == b' ' { c as char } else { '?' }).collect()
+}
+
+/// Decode a SMC value: "flt " little-endian f32 (Apple Silicon), "sp78" signed 8.8
+/// fixed point big-endian (Intel), "ui8 "/"ui16" integers.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn decode_smc(data_type: u32, bytes: &[u8]) -> Option<f32> {
+    match &data_type.to_be_bytes() {
+        b"flt " if bytes.len() >= 4 => Some(f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
+        b"sp78" if bytes.len() >= 2 => Some(i16::from_be_bytes([bytes[0], bytes[1]]) as f32 / 256.0),
+        b"ui8 " if !bytes.is_empty() => Some(bytes[0] as f32),
+        b"ui16" if bytes.len() >= 2 => Some(u16::from_be_bytes([bytes[0], bytes[1]]) as f32),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,6 +181,19 @@ mod tests {
         assert_eq!(&cmd[at..], "");
         let (cmd, at) = join_argv(std::iter::empty());
         assert_eq!((cmd.as_str(), at), ("", 0));
+    }
+    #[test]
+    fn smc_helpers() {
+        assert_eq!(fourcc("#KEY"), 0x234b_4559);
+        assert_eq!(fourcc_str(fourcc("Tp01")), "Tp01");
+        assert_eq!(fourcc_str(fourcc("ui8")), "ui8 ");
+        // Apple Silicon: little-endian f32
+        assert_eq!(decode_smc(fourcc("flt "), &45.5f32.to_le_bytes()), Some(45.5));
+        // Intel: sp78 signed 8.8 fixed point, big endian (0x2D80 = 45.5)
+        assert_eq!(decode_smc(fourcc("sp78"), &[0x2d, 0x80]), Some(45.5));
+        assert_eq!(decode_smc(fourcc("ui16"), &[0x01, 0x00]), Some(256.0));
+        assert_eq!(decode_smc(fourcc("flt "), &[1, 2]), None);
+        assert_eq!(decode_smc(fourcc("ch8*"), &[1, 2, 3, 4]), None);
     }
     #[test]
     fn root_user() {

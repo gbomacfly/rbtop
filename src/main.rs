@@ -7,6 +7,8 @@ mod collect;
 #[cfg(target_os = "macos")]
 #[path = "collect_macos.rs"]
 mod collect;
+#[cfg(target_os = "macos")]
+mod iokit;
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 compile_error!("rbtop supports Linux and macOS only");
 mod config;
