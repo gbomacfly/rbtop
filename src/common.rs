@@ -67,12 +67,33 @@ pub fn lookup_user(uid: u32) -> Option<String> {
     None
 }
 
-/// Parse a macOS KERN_PROCARGS2 buffer into a command line:
+/// Join argv parts into one command line. Returns the line and the byte offset
+/// where the arguments start (after argv[0]), so program paths with spaces
+/// ("/Applications/Google Chrome.app/...") are not split in the middle.
+pub fn join_argv<'a, I: Iterator<Item = &'a [u8]>>(parts: I) -> (String, usize) {
+    let mut out = String::new();
+    let mut args_at = 0;
+    for (i, p) in parts.enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        out.push_str(&String::from_utf8_lossy(p));
+        if i == 0 {
+            args_at = out.len();
+        }
+    }
+    // newlines would break the row layout; same byte length, so args_at stays valid
+    let out = out.replace('\n', " ");
+    let args_at = if out.len() > args_at { args_at + 1 } else { out.len() };
+    (out, args_at)
+}
+
+/// Parse a macOS KERN_PROCARGS2 buffer into (command line, args offset):
 /// [argc: i32][exec path\0][\0 padding][argv0\0 argv1\0 ...][env ...]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub fn parse_procargs2(data: &[u8]) -> String {
+pub fn parse_procargs2(data: &[u8]) -> (String, usize) {
     if data.len() < 4 {
-        return String::new();
+        return (String::new(), 0);
     }
     let argc = i32::from_ne_bytes([data[0], data[1], data[2], data[3]]).max(0) as usize;
     let mut i = 4;
@@ -82,21 +103,16 @@ pub fn parse_procargs2(data: &[u8]) -> String {
     while i < data.len() && data[i] == 0 {
         i += 1; // padding
     }
-    let mut out = String::new();
-    let mut n = 0;
-    while n < argc && i < data.len() {
+    let mut parts: Vec<&[u8]> = Vec::with_capacity(argc.min(64));
+    while parts.len() < argc && i < data.len() {
         let s = i;
         while i < data.len() && data[i] != 0 {
             i += 1;
         }
-        if n > 0 {
-            out.push(' ');
-        }
-        out.push_str(&String::from_utf8_lossy(&data[s..i]));
+        parts.push(&data[s..i]);
         i += 1;
-        n += 1;
     }
-    out.replace('\n', " ")
+    join_argv(parts.into_iter())
 }
 
 #[cfg(test)]
@@ -114,14 +130,30 @@ mod tests {
     fn procargs2() {
         let mut b = 3i32.to_ne_bytes().to_vec();
         b.extend_from_slice(b"/usr/bin/python3\0\0\0\0python3\0-m\0http.server\0PATH=/usr/bin\0HOME=/x\0");
-        assert_eq!(parse_procargs2(&b), "python3 -m http.server");
+        let (cmd, at) = parse_procargs2(&b);
+        assert_eq!(cmd, "python3 -m http.server");
+        assert_eq!(&cmd[at..], "-m http.server");
         let mut b = 1i32.to_ne_bytes().to_vec();
         b.extend_from_slice(b"/sbin/launchd\0\0/sbin/launchd\0");
-        assert_eq!(parse_procargs2(&b), "/sbin/launchd");
-        assert_eq!(parse_procargs2(&[1, 0]), "");
+        let (cmd, at) = parse_procargs2(&b);
+        assert_eq!(cmd, "/sbin/launchd");
+        assert_eq!(&cmd[at..], "");
+        assert_eq!(parse_procargs2(&[1, 0]), (String::new(), 0));
         let mut b = 5i32.to_ne_bytes().to_vec(); // truncated buffer must not panic
         b.extend_from_slice(b"/bin/x\0\0a\0b");
-        assert_eq!(parse_procargs2(&b), "a b");
+        assert_eq!(parse_procargs2(&b).0, "a b");
+    }
+    #[test]
+    fn argv_with_spaces() {
+        let chrome: [&[u8]; 3] = [b"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", b"--type=renderer", b"--lang=de"];
+        let (cmd, at) = join_argv(chrome.into_iter());
+        assert_eq!(&cmd[at..], "--type=renderer --lang=de");
+        assert_eq!(&cmd[..at - 1], "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome");
+        let one: [&[u8]; 1] = [b"/usr/sbin/sshd"];
+        let (cmd, at) = join_argv(one.into_iter());
+        assert_eq!(&cmd[at..], "");
+        let (cmd, at) = join_argv(std::iter::empty());
+        assert_eq!((cmd.as_str(), at), ("", 0));
     }
     #[test]
     fn root_user() {

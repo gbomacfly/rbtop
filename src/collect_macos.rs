@@ -1,5 +1,6 @@
 //! macOS system collectors: cpu (Mach host_processor_info), memory
-//! (host_statistics64 + vm.swapusage), disks (getmntinfo), network
+//! (host_statistics64 + vm.swapusage), disks (getmntinfo, one line per
+//! APFS container), network
 //! (sysctl NET_RT_IFLIST2, 64-bit counters). Same public API as the Linux
 //! collectors in collect.rs, so the UI code is shared.
 //!
@@ -276,13 +277,14 @@ pub fn disk_name(mnt: &str) -> String {
     }
 }
 
-/// Which mounts to show: user-visible volumes, plus the Data volume that
-/// holds everything the user writes (it is flagged "don't browse").
+/// Which mounts to show: "/" and user-visible volumes. /System/Volumes/Data is
+/// skipped: APFS volumes report the numbers of their shared container, so it
+/// would only repeat the "root" line.
 pub fn wanted_mount(mnt: &str, fstype: &str, dontbrowse: bool) -> bool {
     if !FS_OK.contains(&fstype) {
         return false;
     }
-    if mnt == "/" || mnt == "/System/Volumes/Data" {
+    if mnt == "/" {
         return true;
     }
     if mnt.starts_with("/System/Volumes/") || mnt.starts_with("/private/") || mnt.contains("com.apple.") || mnt.starts_with("/Library/Developer/CoreSimulator") {
@@ -549,7 +551,7 @@ mod tests {
     #[test]
     fn mounts() {
         assert!(wanted_mount("/", "apfs", false));
-        assert!(wanted_mount("/System/Volumes/Data", "apfs", true));
+        assert!(!wanted_mount("/System/Volumes/Data", "apfs", true));
         assert!(!wanted_mount("/System/Volumes/Preboot", "apfs", true));
         assert!(!wanted_mount("/System/Volumes/VM", "apfs", true));
         assert!(wanted_mount("/Volumes/Backup", "apfs", false));

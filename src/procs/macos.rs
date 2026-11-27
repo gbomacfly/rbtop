@@ -164,7 +164,7 @@ thread_local! {
 
 /// Command line via sysctl KERN_PROCARGS2:
 /// [argc: i32][exec path\0][\0 padding][argv0\0 argv1\0 ...][env ...]
-pub fn cmdline(pid: i32) -> String {
+pub fn cmdline(pid: i32) -> (String, usize) {
     ARGBUF.with(|cell| {
         let mut buf = cell.borrow_mut();
         if buf.is_empty() {
@@ -178,7 +178,7 @@ pub fn cmdline(pid: i32) -> String {
         let mut len = buf.len();
         let r = unsafe { libc::sysctl(mib.as_mut_ptr(), 3, buf.as_mut_ptr() as *mut libc::c_void, &mut len, std::ptr::null_mut(), 0) };
         if r != 0 || len < 4 {
-            return String::new();
+            return (String::new(), 0);
         }
         crate::common::parse_procargs2(&buf[..len])
     })

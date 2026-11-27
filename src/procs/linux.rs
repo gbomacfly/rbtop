@@ -78,20 +78,19 @@ pub fn uid_of(pid: i32) -> u32 {
     std::fs::metadata(format!("/proc/{pid}")).map(|m| m.uid()).unwrap_or(0)
 }
 
-pub fn cmdline(pid: i32) -> String {
+/// Command line and the offset where the arguments start (after argv[0]).
+pub fn cmdline(pid: i32) -> (String, usize) {
     match std::fs::read(format!("/proc/{pid}/cmdline")) {
         Ok(mut b) => {
             while b.last() == Some(&0) {
                 b.pop();
             }
-            for c in b.iter_mut() {
-                if *c == 0 || *c == b'\n' {
-                    *c = b' ';
-                }
+            if b.is_empty() {
+                return (String::new(), 0);
             }
-            String::from_utf8_lossy(&b).into_owned()
+            crate::common::join_argv(b.split(|&c| c == 0))
         }
-        Err(_) => String::new(),
+        Err(_) => (String::new(), 0),
     }
 }
 

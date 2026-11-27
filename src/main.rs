@@ -917,7 +917,7 @@ impl App {
             s.text(cx, y, &pad(&name, (prog_w - 1).max(0) as usize), ncol, selected || !self.cfg.proc_gradient && !tree);
             cx += prog_w;
             if args_w > 0 {
-                let args = p.cmd.split_once(' ').map(|x| x.1).unwrap_or("");
+                let args = p.cmd.get(p.args_at..).unwrap_or("");
                 s.text(cx, y, &pad(args, (args_w - 1).max(0) as usize), fg, selected);
                 cx += args_w;
             }

@@ -131,7 +131,7 @@ derselben Config. Die Daten kommen aus den nativen Schnittstellen statt aus `/pr
 | Prozesse | `libproc` (`proc_pidinfo`), Kommandozeile über `sysctl KERN_PROCARGS2` |
 | Prozess-I/O (Detailansicht) | `proc_pid_rusage` |
 | Netzwerk | `sysctl NET_RT_IFLIST2` (64-Bit-Zähler) |
-| Disks | `getmntinfo`: `/` als `root`, `/System/Volumes/Data` als `data`, externe Volumes |
+| Disks | `getmntinfo`: `/` als `root` und externe Volumes (das Data-Volume teilt sich bei APFS den Container mit `/` und würde nur dieselben Zahlen wiederholen) |
 
 **Noch nicht auf macOS** (geplant als zweiter Schritt über IOKit): Temperaturen,
 Disk-I/O-Raten, Akku, GPU. Container gibt es unter macOS nicht.

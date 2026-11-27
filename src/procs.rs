@@ -20,6 +20,8 @@ pub struct Proc {
     pub ppid: i32,
     pub name: String,
     pub cmd: String,
+    /// byte offset in `cmd` where the arguments start (after argv[0])
+    pub args_at: usize,
     pub uid: u32,
     pub state: char,
     pub threads: u32,
@@ -175,7 +177,7 @@ impl Procs {
                 if p.name != s.name {
                     // exec happened
                     p.name = s.name.to_string();
-                    p.cmd = platform::cmdline(s.pid);
+                    (p.cmd, p.args_at) = platform::cmdline(s.pid);
                 }
             }
             _ => {
@@ -185,11 +187,13 @@ impl Procs {
                     self.users.insert(uid, n);
                 }
                 let container = if containers { self.container_of(s.pid) } else { None };
+                let (cmd, args_at) = platform::cmdline(s.pid);
                 let p = Proc {
                     pid: s.pid,
                     ppid: s.ppid,
                     name: s.name.to_string(),
-                    cmd: platform::cmdline(s.pid),
+                    cmd,
+                    args_at,
                     uid,
                     state: s.state,
                     threads: s.threads,
