@@ -14,7 +14,8 @@ use std::time::Instant;
 #[derive(Default)]
 struct TempSrc {
     pkg: Option<String>,
-    cores: Vec<(usize, String)>, // core_id -> path
+    /// ((physical package, core_id), path): core ids repeat on every socket
+    cores: Vec<((usize, usize), String)>,
     crit: f32,
 }
 
@@ -29,7 +30,8 @@ pub struct Cpu {
     pub load: [f32; 3],
     pub uptime: f64,
     temps: TempSrc,
-    thread_core: Vec<usize>,
+    /// (physical package, core_id) per thread
+    thread_core: Vec<(usize, usize)>,
     pub temp: Option<f32>,
     pub temp_crit: f32,
     pub core_temps: Vec<Option<f32>>, // per thread
@@ -66,9 +68,8 @@ impl Cpu {
                 freq_paths.push(p);
             }
         }
-        let thread_core = (0..threads)
-            .map(|i| read_num(&format!("/sys/devices/system/cpu/cpu{i}/topology/core_id")).map(|v| v as usize).unwrap_or(i))
-            .collect();
+        let topo = |i: usize, f: &str| read_num(&format!("/sys/devices/system/cpu/cpu{i}/topology/{f}")).map(|v| v as usize);
+        let thread_core = (0..threads).map(|i| (topo(i, "physical_package_id").unwrap_or(0), topo(i, "core_id").unwrap_or(i))).collect();
         let mut c = Cpu {
             threads,
             model,
@@ -115,6 +116,12 @@ impl Cpu {
                 inputs.sort();
                 match name.as_str() {
                     "coretemp" => {
+                        // one coretemp hwmon per socket, its "Package id N" label names it
+                        let pkg_id = inputs
+                            .iter()
+                            .find_map(|(l, _)| l.strip_prefix("Package id ").or_else(|| l.strip_prefix("Physical id ")))
+                            .and_then(|n| n.trim().parse::<usize>().ok())
+                            .unwrap_or(0);
                         for (label, p) in &inputs {
                             if label.starts_with("Package id") || label.starts_with("Physical id") {
                                 if ts.pkg.is_none() {
@@ -125,7 +132,7 @@ impl Cpu {
                                 }
                             } else if let Some(n) = label.strip_prefix("Core ") {
                                 if let Ok(id) = n.trim().parse::<usize>() {
-                                    ts.cores.push((id, p.clone()));
+                                    ts.cores.push(((pkg_id, id), p.clone()));
                                 }
                             }
                         }
@@ -142,10 +149,8 @@ impl Cpu {
                             ts.pkg = inputs.first().map(|x| x.1.clone());
                         }
                     }
-                    "acpitz" => {
-                        if fallback.is_none() {
-                            fallback = inputs.first().map(|x| x.1.clone());
-                        }
+                    "acpitz" if fallback.is_none() => {
+                        fallback = inputs.first().map(|x| x.1.clone());
                     }
                     _ => {}
                 }
@@ -237,7 +242,7 @@ impl Cpu {
                 push(&mut self.temp_hist[0], (t / crit * 100.0).clamp(0.0, 100.0));
             }
             if !self.temps.cores.is_empty() {
-                let mut by_core: Vec<(usize, f32)> = Vec::with_capacity(self.temps.cores.len());
+                let mut by_core: Vec<((usize, usize), f32)> = Vec::with_capacity(self.temps.cores.len());
                 for (id, p) in &self.temps.cores {
                     if read_to(p, &mut self.buf) {
                         if let Ok(v) = self.buf.trim().parse::<f32>() {
@@ -425,7 +430,7 @@ impl Disks {
             None => (false, f),
         };
         let name = if mount == "/" { "root" } else { mount.rsplit('/').next().unwrap_or(mount) };
-        let hit = list.split(|c: char| c == ' ' || c == ',').filter(|s| !s.is_empty()).any(|x| {
+        let hit = list.split([' ', ',']).filter(|s| !s.is_empty()).any(|x| {
             let x = x.trim();
             x == name || x == mount || (x == "root" && mount == "/")
         });
@@ -528,7 +533,7 @@ impl Disks {
         for d in self.list.iter_mut() {
             if let Some(p) = &d.zfs_objset {
                 if read_to(p, &mut self.buf) {
-                    let (mut r, mut w) = (0, 0);
+                    let (mut r, mut w) = (0u64, 0u64);
                     for l in self.buf.lines() {
                         let mut it = l.split_ascii_whitespace();
                         match it.next() {
@@ -538,8 +543,8 @@ impl Disks {
                         }
                     }
                     if let Some((pr, pw)) = d.prev_rw {
-                        d.read_bps = (r as u64).saturating_sub(pr) as f64 / dt;
-                        d.write_bps = (w as u64).saturating_sub(pw) as f64 / dt;
+                        d.read_bps = r.saturating_sub(pr) as f64 / dt;
+                        d.write_bps = w.saturating_sub(pw) as f64 / dt;
                     }
                     d.prev_rw = Some((r, w));
                 }
@@ -762,6 +767,10 @@ pub struct Battery {
 impl Battery {
     pub fn new() -> Battery {
         let mut path = None;
+        // layout testing only: a directory with capacity/status files
+        if let Ok(p) = std::env::var("RBTOP_TEST_BATTERY") {
+            return Battery { path: Some(p), percent: None, status: String::new(), last: None };
+        }
         if let Ok(rd) = std::fs::read_dir("/sys/class/power_supply") {
             let mut v: Vec<_> = rd.flatten().map(|e| e.path()).collect();
             v.sort();
@@ -783,7 +792,7 @@ impl Battery {
 
     pub fn collect(&mut self) {
         let Some(p) = &self.path else { return };
-        if self.last.map_or(false, |t| t.elapsed().as_secs() < 5) {
+        if self.last.is_some_and(|t| t.elapsed().as_secs() < 5) {
             return;
         }
         self.last = Some(Instant::now());
@@ -814,6 +823,8 @@ pub struct Gpus {
     amd: Vec<AmdGpu>,
     nvidia: Option<Arc<Mutex<Vec<GpuStat>>>>,
     child: Option<libc::pid_t>,
+    /// -lms interval nvidia-smi was started with
+    nvidia_ms: u64,
     pub stats: Vec<GpuStat>,
     pub hist: Vec<VecDeque<f32>>,
     buf: String,
@@ -866,13 +877,17 @@ fn spawn_reader(args: &[&str]) -> Option<(libc::pid_t, File)> {
     }
 }
 
+fn nvidia_interval(update_ms: u64) -> u64 {
+    update_ms.clamp(200, 10_000)
+}
+
 fn in_path(bin: &str) -> bool {
     std::env::var("PATH").unwrap_or_default().split(':').any(|d| std::path::Path::new(d).join(bin).is_file())
 }
 
 impl Gpus {
     pub fn new(enabled: bool, update_ms: u64) -> Gpus {
-        let mut g = Gpus { amd: Vec::new(), nvidia: None, child: None, stats: Vec::new(), hist: Vec::new(), buf: String::new() };
+        let mut g = Gpus { amd: Vec::new(), nvidia: None, child: None, nvidia_ms: nvidia_interval(update_ms), stats: Vec::new(), hist: Vec::new(), buf: String::new() };
         if !enabled {
             return g;
         }
@@ -907,7 +922,7 @@ impl Gpus {
         }
         if (std::path::Path::new("/proc/driver/nvidia").exists() || std::path::Path::new("/dev/nvidia0").exists()) && in_path("nvidia-smi") {
             // One long-running process streaming csv, instead of forking every tick.
-            let ms = update_ms.clamp(200, 10_000).to_string();
+            let ms = g.nvidia_ms.to_string();
             if let Some((pid, out)) = spawn_reader(&["nvidia-smi", "--query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu", "--format=csv,noheader,nounits", "-lms", &ms]) {
                 let shared = Arc::new(Mutex::new(Vec::<GpuStat>::new()));
                 let s2 = shared.clone();
@@ -964,6 +979,15 @@ impl Gpus {
         self.hist.resize_with(self.stats.len(), || VecDeque::with_capacity(HIST));
         for (h, s) in self.hist.iter_mut().zip(&self.stats) {
             push(h, s.util);
+        }
+    }
+
+    /// Restart nvidia-smi when the update interval changed, so it does not keep
+    /// polling at the old rate. Called once per tick, after the value settled.
+    pub fn retune(&mut self, update_ms: u64) {
+        if self.child.is_some() && nvidia_interval(update_ms) != self.nvidia_ms {
+            self.shutdown();
+            *self = Gpus::new(true, update_ms);
         }
     }
 

@@ -13,12 +13,30 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable branch
+        with:
+          toolchain: stable
       - run: cargo test --release
       - run: cargo build --release
       # smoke test: binary starts and prints its version
       - run: ./target/release/rbtop --version
+
+  # lint gate: not a dependency of the release jobs, so a new clippy lint in a
+  # future stable toolchain shows up red here without blocking a release
+  clippy:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable branch
+        with:
+          toolchain: stable
+          components: clippy
+      - run: cargo clippy --release -- -D warnings
 
   release-linux:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -30,23 +48,29 @@ jobs:
       matrix:
         target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl, x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install cross --locked
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable branch
+        with:
+          toolchain: stable
+      - run: cargo install cross --locked --version 0.2.5
       - run: cross build --release --target ${{ matrix.target }}
       - run: |
           mkdir dist
           cp target/${{ matrix.target }}/release/rbtop dist/
           cp -r themes README.md README.de.md CHANGELOG.md LICENSE dist/
           tar czf rbtop-${{ github.ref_name }}-${{ matrix.target }}.tar.gz -C dist .
+          f=rbtop-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+          shasum -a 256 "$f" > "$f.sha256"
       - name: release notes from CHANGELOG.md
         run: |
           v="${GITHUB_REF_NAME#v}"
           awk -v v="$v" '/^\[[0-9]/ && f { exit } /^## \[/ { if (f) exit; if (index($0, "## [" v "]") == 1) { f = 1; next } } f' CHANGELOG.md > notes.md
           test -s notes.md || echo "See CHANGELOG.md" > notes.md
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
-          files: rbtop-*.tar.gz
+          files: |
+            rbtop-*.tar.gz
+            rbtop-*.tar.gz.sha256
           body_path: notes.md
 
   release-macos:
@@ -56,9 +80,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable branch
         with:
+          toolchain: stable
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - run: cargo build --release --target aarch64-apple-darwin
       - run: cargo build --release --target x86_64-apple-darwin
@@ -73,13 +98,16 @@ jobs:
             target/aarch64-apple-darwin/release/rbtop target/x86_64-apple-darwin/release/rbtop
           for t in aarch64-apple-darwin x86_64-apple-darwin universal-apple-darwin; do
             tar czf rbtop-${{ github.ref_name }}-$t.tar.gz -C dist-$t .
+            shasum -a 256 rbtop-${{ github.ref_name }}-$t.tar.gz > rbtop-${{ github.ref_name }}-$t.tar.gz.sha256
           done
       - name: release notes from CHANGELOG.md
         run: |
           v="${GITHUB_REF_NAME#v}"
           awk -v v="$v" '/^\[[0-9]/ && f { exit } /^## \[/ { if (f) exit; if (index($0, "## [" v "]") == 1) { f = 1; next } } f' CHANGELOG.md > notes.md
           test -s notes.md || echo "See CHANGELOG.md" > notes.md
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
-          files: rbtop-*.tar.gz
+          files: |
+            rbtop-*.tar.gz
+            rbtop-*.tar.gz.sha256
           body_path: notes.md

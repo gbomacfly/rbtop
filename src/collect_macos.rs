@@ -403,6 +403,7 @@ impl Disks {
         // io rates: per physical driver; APFS volumes report their physical store
         let dt = self.last_io.elapsed().as_secs_f64().max(0.001);
         self.last_io = Instant::now();
+        let mounted: Vec<String> = new.iter().map(|(_, bsd)| bsd.clone()).filter(|b| !b.is_empty()).collect();
         let mut new: Vec<Disk> = new
             .into_iter()
             .map(|(mut d, bsd)| {
@@ -410,16 +411,29 @@ impl Disks {
                     return d;
                 }
                 let drv = self.drivers.entry(bsd.clone()).or_insert_with(|| bsd_candidates(&bsd).iter().find_map(|b| iokit::block_driver_for(b)));
-                if let Some((r, w)) = drv.as_ref().and_then(iokit::block_stats) {
-                    d.io = true;
-                    if let Some((pr, pw)) = self.prev.insert(bsd, (r, w)) {
-                        d.read_bps = r.saturating_sub(pr) as f64 / dt;
-                        d.write_bps = w.saturating_sub(pw) as f64 / dt;
+                match drv.as_ref().and_then(iokit::block_stats) {
+                    Some((r, w)) => {
+                        d.io = true;
+                        if let Some((pr, pw)) = self.prev.insert(bsd, (r, w)) {
+                            d.read_bps = r.saturating_sub(pr) as f64 / dt;
+                            d.write_bps = w.saturating_sub(pw) as f64 / dt;
+                        }
                     }
+                    // driver gone (disk replaced under the same diskN): look it up again next time
+                    None if drv.is_some() => {
+                        self.drivers.remove(&bsd);
+                        self.prev.remove(&bsd);
+                    }
+                    None => {}
                 }
                 d
             })
             .collect();
+        // forget unmounted disks: a USB disk plugged in later may get the same
+        // diskN but is a different driver object
+        let live: std::collections::HashSet<&str> = mounted.iter().map(String::as_str).collect();
+        self.drivers.retain(|k, _| live.contains(k.as_str()));
+        self.prev.retain(|k, _| live.contains(k.as_str()));
         if let Some(pos) = new.iter().position(|d| d.mount == "/") {
             let r = new.remove(pos);
             new.insert(0, r);
@@ -647,6 +661,8 @@ impl Gpus {
         }
     }
     pub fn shutdown(&mut self) {}
+    /// Nothing to retune: no helper process on macOS.
+    pub fn retune(&mut self, _update_ms: u64) {}
 }
 
 #[cfg(test)]

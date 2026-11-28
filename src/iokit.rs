@@ -96,12 +96,34 @@ fn cf_to_bool(v: CFTypeRef) -> Option<bool> {
     Some(unsafe { CFBooleanGetValue(v) } != 0)
 }
 
-fn dict_get(d: CFTypeRef, key: &str) -> CFTypeRef {
+thread_local! {
+    /// CFStrings for the fixed property/dictionary keys, created once instead
+    /// of on every lookup (several per tick). Kept for the life of the thread.
+    static KEYS: std::cell::RefCell<Vec<(&'static str, Cf)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn key(name: &'static str) -> CFStringRef {
+    KEYS.with(|k| {
+        let mut k = k.borrow_mut();
+        if let Some((_, cf)) = k.iter().find(|(n, _)| *n == name) {
+            return cf.0;
+        }
+        let cf = cfstr(name);
+        let r = cf.0;
+        k.push((name, cf));
+        r
+    })
+}
+
+fn dict_get(d: CFTypeRef, name: &'static str) -> CFTypeRef {
     if d.is_null() || unsafe { CFGetTypeID(d) != CFDictionaryGetTypeID() } {
         return std::ptr::null();
     }
-    let k = cfstr(key);
-    unsafe { CFDictionaryGetValue(d, k.0) }
+    let k = key(name);
+    if k.is_null() {
+        return std::ptr::null();
+    }
+    unsafe { CFDictionaryGetValue(d, k) }
 }
 
 // ---------------------------------------------------------------------- IOKit
@@ -182,9 +204,12 @@ fn all_services(class: &str) -> Vec<IoObj> {
     out
 }
 
-fn property(entry: io_object_t, key: &str) -> Cf {
-    let k = cfstr(key);
-    Cf(unsafe { IORegistryEntryCreateCFProperty(entry, k.0, std::ptr::null(), 0) })
+fn property(entry: io_object_t, name: &'static str) -> Cf {
+    let k = key(name);
+    if k.is_null() {
+        return Cf(std::ptr::null());
+    }
+    Cf(unsafe { IORegistryEntryCreateCFProperty(entry, k, std::ptr::null(), 0) })
 }
 
 // -------------------------------------------------------------- disk io stats
@@ -508,6 +533,7 @@ impl HidTemps {
                 }
             }
         }
-        (!v.is_empty()).then(|| v.iter().copied().fold(f32::MIN, f32::max))
+        // average, like the SMC path, so both sources read the same way
+        (!v.is_empty()).then(|| v.iter().sum::<f32>() / v.len() as f32)
     }
 }

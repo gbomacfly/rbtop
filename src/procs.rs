@@ -11,7 +11,7 @@ mod macos;
 #[cfg(target_os = "macos")]
 use macos as platform;
 
-use crate::common::{lookup_user, push, HIST};
+use crate::common::{display_clean, lookup_user, push, HIST};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
@@ -174,24 +174,22 @@ impl Procs {
                 p.nice = s.nice;
                 p.mem_pct = mem_pct;
                 p.gen = gen;
-                if p.name != s.name {
+                let name = display_clean(s.name);
+                if p.name != *name {
                     // exec happened
-                    p.name = s.name.to_string();
-                    (p.cmd, p.args_at) = platform::cmdline(s.pid);
+                    p.name = name.into_owned();
+                    (p.cmd, p.args_at) = cmdline(s.pid);
                 }
             }
             _ => {
                 let uid = s.uid.unwrap_or_else(|| platform::uid_of(s.pid));
-                if !self.users.contains_key(&uid) {
-                    let n = lookup_user(uid).unwrap_or_else(|| uid.to_string());
-                    self.users.insert(uid, n);
-                }
+                self.users.entry(uid).or_insert_with(|| lookup_user(uid).unwrap_or_else(|| uid.to_string()));
                 let container = if containers { self.container_of(s.pid) } else { None };
-                let (cmd, args_at) = platform::cmdline(s.pid);
+                let (cmd, args_at) = cmdline(s.pid);
                 let p = Proc {
                     pid: s.pid,
                     ppid: s.ppid,
-                    name: s.name.to_string(),
+                    name: display_clean(s.name).into_owned(),
                     cmd,
                     args_at,
                     uid,
@@ -241,8 +239,8 @@ impl Procs {
             p.pid.to_string().contains(&f)
                 || p.name.to_lowercase().contains(&f)
                 || p.cmd.to_lowercase().contains(&f)
-                || users.get(&p.uid).map_or(false, |u| u.to_lowercase().contains(&f))
-                || p.container.as_ref().map_or(false, |c| c.to_lowercase().contains(&f))
+                || users.get(&p.uid).is_some_and(|u| u.to_lowercase().contains(&f))
+                || p.container.as_ref().is_some_and(|c| c.to_lowercase().contains(&f))
         };
         let users = &self.users;
         let map = &self.map;
@@ -317,17 +315,50 @@ impl Procs {
     }
 
     /// All descendants of pid (for signalling a whole tree, issue #185).
+    /// One pass to index children, then a walk with a visited set: ppid
+    /// values are read at different times, so a racy cycle is possible.
     pub fn descendants(&self, pid: i32) -> Vec<i32> {
+        let mut children: HashMap<i32, Vec<i32>> = HashMap::new();
+        for p in self.map.values() {
+            if p.pid != p.ppid {
+                children.entry(p.ppid).or_default().push(p.pid);
+            }
+        }
+        let mut seen = HashSet::from([pid]);
         let mut out = Vec::new();
         let mut todo = vec![pid];
         while let Some(p) = todo.pop() {
-            for c in self.map.values().filter(|x| x.ppid == p && x.pid != p) {
-                out.push(c.pid);
-                todo.push(c.pid);
+            for &c in children.get(&p).map(Vec::as_slice).unwrap_or(&[]) {
+                if seen.insert(c) {
+                    out.push(c);
+                    todo.push(c);
+                }
             }
         }
         out
     }
+}
+
+/// Command line cleaned for display; program and arguments are cleaned
+/// separately so the args offset stays a valid byte index.
+fn cmdline(pid: i32) -> (String, usize) {
+    let (cmd, at) = platform::cmdline(pid);
+    if cmd.is_ascii() {
+        return (cmd, at);
+    }
+    let at = if cmd.is_char_boundary(at) { at } else { 0 };
+    let (prog, args) = cmd.split_at(at);
+    let mut out = display_clean(prog).into_owned();
+    let at = out.len();
+    out.push_str(&display_clean(args));
+    (out, at)
+}
+
+/// Fresh start time of a process (same unit as `Proc::start`). Compared
+/// right before a signal is sent, so a pid that was reused in the meantime
+/// by another process is not hit.
+pub fn start_time(pid: i32) -> Option<u64> {
+    platform::start_time(pid)
 }
 
 /// Fresh process state (for the pause/resume toggle).
@@ -365,5 +396,30 @@ mod signal_tests {
             assert!(send_signal(pid, 0).is_err());
         }
         assert!(send_signal(std::process::id() as i32, 0).is_ok());
+    }
+    #[test]
+    fn own_start_time_is_stable() {
+        let me = std::process::id() as i32;
+        let a = start_time(me).expect("own start time");
+        assert_eq!(start_time(me), Some(a));
+        assert_eq!(start_time(i32::MAX), None);
+        // same unit as the sampler, so the kill dialog comparison holds
+        let mut ps = Procs::new();
+        ps.collect(1, 1 << 30, false, false);
+        assert_eq!(ps.map.get(&me).map(|p| p.start), Some(a));
+    }
+    #[test]
+    fn descendants_survive_cycles() {
+        let mut ps = Procs::new();
+        ps.map.clear();
+        let mk = |pid, ppid| Proc { pid, ppid, name: String::new(), cmd: String::new(), args_at: 0, uid: 0, state: 'S', threads: 1, rss: 0, mem_pct: 0.0, cpu: 0.0, cpu_lazy: 0.0, mini: [0; 8], nice: 0, start: 0, container: None, ticks: 0, gen: 0 };
+        // 10 -> 11 -> 12 -> 10 (racy cycle), 11 -> 13
+        for (pid, ppid) in [(10, 12), (11, 10), (12, 11), (13, 11), (20, 1)] {
+            ps.map.insert(pid, mk(pid, ppid));
+        }
+        let mut d = ps.descendants(10);
+        d.sort();
+        assert_eq!(d, vec![11, 12, 13]);
+        assert!(ps.descendants(13).is_empty());
     }
 }

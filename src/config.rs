@@ -197,7 +197,10 @@ impl Config {
                         continue;
                     }
                     if let Some((k, v)) = l.split_once('=') {
-                        c.set(k.trim(), v.trim().trim_matches('"'));
+                        // strip one pair of quotes only, so a value may contain '"'
+                        let v = v.trim();
+                        let v = v.strip_prefix('"').and_then(|x| x.strip_suffix('"')).unwrap_or(v);
+                        c.set(k.trim(), v);
                     }
                 }
                 break;
@@ -222,8 +225,13 @@ impl Config {
             }
             s.push_str(&format!("{}=\"{}\"\n", o.key, self.get(o.key)));
         }
-        let _ = std::fs::write(&path, s);
-        fix_sudo_owner(&path);
+        // write + rename: a kill or full disk mid-write never leaves a truncated config
+        let tmp = path.with_extension("cfg.tmp");
+        if std::fs::write(&tmp, s).is_ok() && std::fs::rename(&tmp, &path).is_ok() {
+            fix_sudo_owner(&path);
+        } else {
+            let _ = std::fs::remove_file(&tmp);
+        }
     }
 }
 
@@ -248,5 +256,26 @@ fn fix_sudo_owner(file: &std::path::Path) {
         if std::fs::symlink_metadata(&p).is_ok_and(|m| m.uid() == 0 && !m.file_type().is_symlink()) {
             let _ = std::os::unix::fs::lchown(&p, Some(uid), Some(gid));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn save_and_load_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("rbtop-cfgtest-{}", std::process::id()));
+        // config_dir() reads XDG_CONFIG_HOME; tests in this binary run in threads,
+        // and no other test touches the config, so setting it here is fine
+        std::env::set_var("XDG_CONFIG_HOME", &dir);
+        let mut c = Config::default();
+        c.draw_clock = "%H:%M \"x\"".into();
+        c.update_ms = 1234;
+        c.save();
+        let l = Config::load();
+        assert_eq!(l.draw_clock, "%H:%M \"x\"");
+        assert_eq!(l.update_ms, 1234);
+        assert!(!dir.join("rbtop/rbtop.cfg.tmp").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -51,6 +51,7 @@ fn level(v: f32, levels: i32) -> i32 {
 }
 
 /// Braille graph. `data` values are 0..=100, newest last. Right-aligned.
+#[allow(clippy::too_many_arguments)]
 pub fn graph<I>(s: &mut Screen, x: i32, y: i32, w: i32, h: i32, data: I, n: usize, grad: &Gradient, invert: bool, hires: bool)
 where
     I: DoubleEndedIterator<Item = f32> + ExactSizeIterator,
@@ -88,13 +89,7 @@ where
                 continue;
             }
             let (tl, tr) = if invert { (&DN_L, &DN_R) } else { (&UP_L, &UP_R) };
-            let mut bits = 0u32;
-            for k in 0..fl {
-                bits |= tl[k];
-            }
-            for k in 0..fr {
-                bits |= tr[k];
-            }
+            let bits = tl[..fl].iter().chain(&tr[..fr]).fold(0u32, |b, x| b | x);
             let ch = char::from_u32(0x2800 + bits).unwrap_or(' ');
             let pos = ((h - row) * 100 / h).clamp(0, 100) as usize;
             let yy = if invert { y + (h - 1 - row) } else { y + row };
@@ -103,11 +98,13 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn graph_dq(s: &mut Screen, x: i32, y: i32, w: i32, h: i32, d: &VecDeque<f32>, grad: &Gradient, invert: bool, hires: bool) {
     graph(s, x, y, w, h, d.iter().copied(), d.len(), grad, invert, hires);
 }
 
 /// Mini graph colored by each value (used for cores / processes).
+#[allow(clippy::too_many_arguments)]
 pub fn mini<I>(s: &mut Screen, x: i32, y: i32, w: i32, data: I, n: usize, grad: &Gradient, hires: bool)
 where
     I: DoubleEndedIterator<Item = f32> + ExactSizeIterator,
@@ -123,13 +120,7 @@ where
             continue;
         }
         let (fl, fr) = (level(l, 4) as usize, level(r, 4) as usize);
-        let mut bits = 0;
-        for k in 0..fl {
-            bits |= UP_L[k];
-        }
-        for k in 0..fr {
-            bits |= UP_R[k];
-        }
+        let bits = UP_L[..fl.min(4)].iter().chain(&UP_R[..fr.min(4)]).fold(0u32, |b, x| b | x);
         let ch = if bits == 0 { ' ' } else { char::from_u32(0x2800 + bits).unwrap_or(' ') };
         let v = l.max(r).clamp(0.0, 100.0) as usize;
         s.set(x + col, y, ch, grad[v], false);
@@ -205,7 +196,7 @@ pub fn strftime(fmt: &str) -> String {
         let mut tm: libc::tm = std::mem::zeroed();
         libc::localtime_r(&t, &mut tm);
         let Ok(cf) = std::ffi::CString::new(fmt) else { return String::new() };
-        let mut buf = [0u8; 128];
+        let mut buf = [0u8; 256];
         let n = libc::strftime(buf.as_mut_ptr() as *mut libc::c_char, buf.len(), cf.as_ptr(), &tm);
         String::from_utf8_lossy(&buf[..n]).into_owned()
     }

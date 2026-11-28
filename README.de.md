@@ -169,6 +169,12 @@ Fertige Binaries baut die GitHub-Action bei jedem Tag `v*` und hängt sie an das
 - macOS: `aarch64-apple-darwin` (Apple Silicon), `x86_64-apple-darwin` (Intel) und
   `universal-apple-darwin` (beides in einer Datei)
 
+Zu jedem Archiv gibt es eine `.sha256`-Datei, damit lässt sich der Download prüfen:
+
+```sh
+shasum -a 256 -c rbtop-v0.3.3-x86_64-unknown-linux-musl.tar.gz.sha256
+```
+
 ## macOS
 
 Seit 0.2.0 läuft rbtop auch auf macOS, seit 0.3.0 mit Temperaturen, Disk-I/O, GPU und Akku, mit derselben Oberfläche, denselben Tasten und

@@ -55,7 +55,7 @@ enum Mode {
     Menu { sel: usize },
     Options { sel: usize, edit: Option<String> },
     Help { page: usize },
-    Signal { sig: i32, verb: &'static str, signame: &'static str, pid: i32, name: String, sel: usize, result: Option<Vec<String>> },
+    Signal { sig: i32, verb: &'static str, signame: &'static str, pid: i32, start: u64, name: String, sel: usize, result: Option<Vec<String>> },
 }
 
 struct Button {
@@ -81,6 +81,8 @@ struct App {
     page: usize,
     filter: String,
     filter_input: bool,
+    /// update_ms at the previous tick (debounces the nvidia-smi restart)
+    last_tick_ms: u64,
     rows_dirty: bool,
     mode: Mode,
     buttons: Vec<Button>,
@@ -149,6 +151,7 @@ impl App {
             page: 10,
             filter: String::new(),
             filter_input: false,
+            last_tick_ms: cfg.update_ms,
             rows_dirty: true,
             mode: Mode::Normal,
             buttons: Vec::new(),
@@ -178,8 +181,13 @@ impl App {
             self.bat.collect();
         }
         if self.cfg.show_gpu {
+            // only once +/- presses have settled for a whole tick
+            if self.cfg.update_ms == self.last_tick_ms {
+                self.gpu.retune(self.cfg.update_ms);
+            }
             self.gpu.collect();
         }
+        self.last_tick_ms = self.cfg.update_ms;
         self.rows_dirty = true;
         self.collect_us = t.elapsed().as_micros();
     }
@@ -322,11 +330,15 @@ impl App {
         s.set(x, r.y, '├', cbox, false);
         // clock (center)
         let clock = strftime(&self.cfg.draw_clock);
+        // first free column right of the clock (or the menu button)
+        let mut left_end = r.x + 17;
         if !clock.is_empty() {
             let cx = r.x + (r.w - clock.chars().count() as i32 - 2) / 2;
-            tag(s, cx, r.y, cbox, &[(&clock, title, true)]);
+            left_end = left_end.max(tag(s, cx, r.y, cbox, &[(&clock, title, true)]));
         }
-        // battery (issue #199), left of update string
+        // battery (issue #199), left of update string; on narrow terminals the
+        // meter shrinks or goes, and the whole tag is left out before it would
+        // overlap the clock
         if self.cfg.show_battery && self.bat.present() {
             if let Some(p) = self.bat.percent {
                 let sym = match self.bat.status.as_str() {
@@ -336,16 +348,21 @@ impl App {
                     _ => "○",
                 };
                 let txt = format!("BAT{sym} {p}% ");
-                let bw = 10;
-                let bx = ux - (txt.chars().count() as i32 + bw + 3);
-                let th = &self.th;
-                s.set(bx, r.y, '┤', cbox, false);
-                let x = s.text(bx + 1, r.y, &txt, title, true);
-                // battery: red when low
-                let mut g = th.cpu;
-                g.reverse();
-                meter(s, x, r.y, bw, p as f32, &g, th.inactive_fg);
-                s.set(x + bw, r.y, '├', cbox, false);
+                let tl = txt.chars().count() as i32;
+                let fit = [10, 6, 0].into_iter().find(|bw| ux - (tl + bw + 3) > left_end);
+                if let Some(bw) = fit {
+                    let bx = ux - (tl + bw + 3);
+                    let th = &self.th;
+                    s.set(bx, r.y, '┤', cbox, false);
+                    let x = s.text(bx + 1, r.y, &txt, title, true);
+                    if bw > 0 {
+                        // battery: red when low
+                        let mut g = th.cpu;
+                        g.reverse();
+                        meter(s, x, r.y, bw, p as f32, &g, th.inactive_fg);
+                    }
+                    s.set(x + bw, r.y, '├', cbox, false);
+                }
             }
         }
         // uptime on bottom border
@@ -565,9 +582,6 @@ impl App {
         let per = if rows >= n * 3 { 3 } else if rows >= n * 2 { 2 } else { 1 };
         let mut y = r.y + 1;
         for d in &self.disks.list {
-            if y + per > bottom + 0 && y >= bottom {
-                break;
-            }
             if y >= bottom {
                 break;
             }
@@ -601,7 +615,8 @@ impl App {
             y += 1;
             let lines: [(&str, f32, u64, &theme::Gradient); 2] = [("Used:", d.used_pct, d.used, &th.used), ("Free:", 100.0 - d.used_pct, d.free, &th.free)];
             for (i, (label, pct, val, grad)) in lines.iter().enumerate() {
-                if i + 1 >= per as usize + 0 && i >= (per - 1) as usize {
+                // per == 2: "Used" only, per == 3: "Used" and "Free"
+                if i + 1 >= per as usize {
                     break;
                 }
                 if y >= bottom {
@@ -665,7 +680,7 @@ impl App {
             format!("Top: {}/s", fmt_bytes(n.tx_top)),
             format!("Total: {}", fmt_bytes(n.tx_total as f64)),
         ];
-        let lines_each = half.min(4).max(1) as usize;
+        let lines_each = half.clamp(1, 4) as usize;
         let order = [0usize, 3, 1, 2]; // most important first when space is short
         let mut pick: Vec<usize> = order.iter().copied().take(lines_each).collect();
         pick.sort();
@@ -926,7 +941,7 @@ impl App {
             s.text(cx, y, &pad(&p.pid.to_string(), pid_w as usize), fg, selected);
             cx += pid_w;
             let name = if tree { format!("{}{}", row.prefix, p.name) } else { p.name.clone() };
-            let ncol = if stopped && !selected { inactive.max(0x707070) } else if selected { fg } else if tree { fg } else { fg };
+            let ncol = if stopped && !selected { inactive.max(0x707070) } else { fg };
             s.text(cx, y, &pad(&name, (prog_w - 1).max(0) as usize), ncol, selected || !self.cfg.proc_gradient && !tree);
             cx += prog_w;
             if args_w > 0 {
@@ -947,7 +962,7 @@ impl App {
             cx += mem_w;
             let cv = if lazy { p.cpu_lazy } else { p.cpu };
             let cpu_s = if cv >= 100.0 { format!("{:.0}", cv) } else { format!("{:.1}", cv) };
-            let cfg_c = if selected { fg } else if self.cfg.proc_gradient { th.cpu[(cv.clamp(0.0, 100.0)) as usize].max(0) } else { fg };
+            let cfg_c = if selected { fg } else if self.cfg.proc_gradient { th.cpu[cv.clamp(0.0, 100.0) as usize] } else { fg };
             s.text(cx, y, &rpad(&cpu_s, (cpu_w - 1) as usize), if cv > 0.5 { cfg_c } else { fg }, selected);
             cx += cpu_w;
             if graph_w > 0 {
@@ -1141,6 +1156,19 @@ impl App {
                 let (x, y) = (x as i32, y as i32);
                 if let Some(b) = self.buttons.iter().find(|b| y == b.y && x >= b.x && x < b.x + b.w) {
                     let key = b.key;
+                    // A click is a command, not text: finish a running filter
+                    // input first, or the button letter would land in the filter.
+                    if self.filter_input && matches!(self.mode, Mode::Normal) && matches!(key, Key::Char(_)) {
+                        self.filter_input = false;
+                        if key == Key::Char('f') {
+                            return;
+                        }
+                    }
+                    if let Mode::Options { sel, edit: Some(_) } = self.mode {
+                        if matches!(key, Key::Char(_)) {
+                            self.mode = Mode::Options { sel, edit: None };
+                        }
+                    }
                     return self.handle(key);
                 }
                 if matches!(self.mode, Mode::Normal) {
@@ -1204,7 +1232,7 @@ impl App {
                 _ => self.mode = Mode::Normal,
             },
             Mode::Options { sel, edit } => self.handle_options(k, sel, edit),
-            Mode::Signal { sig, verb, signame, pid, name, sel, result } => {
+            Mode::Signal { sig, verb, signame, pid, start, name, sel, result } => {
                 if result.is_some() {
                     if matches!(k, Key::Enter | Key::Esc | Key::Char(_)) {
                         self.mode = Mode::Normal;
@@ -1212,33 +1240,44 @@ impl App {
                     return;
                 }
                 let act = |me: &mut App, tree: bool| {
-                    let mut targets = vec![pid];
+                    // (pid, start time when listed): a pid whose start time changed
+                    // belongs to a new process by now and is skipped
+                    let mut targets = vec![(pid, start)];
                     if tree {
-                        targets.extend(me.procs.descendants(pid));
+                        targets.extend(me.procs.descendants(pid).into_iter().filter_map(|c| me.procs.map.get(&c).map(|p| (c, p.start))));
                     }
-                    targets.retain(|&t| procs::signal_allowed(t));
-                    let mut ok = 0;
+                    targets.retain(|&(t, _)| procs::signal_allowed(t));
+                    let (mut ok, mut gone) = (0, 0);
                     let mut err = None;
-                    for t in &targets {
-                        match procs::send_signal(*t, sig) {
+                    for &(t, st) in &targets {
+                        if procs::start_time(t) != Some(st) {
+                            gone += 1;
+                            continue;
+                        }
+                        match procs::send_signal(t, sig) {
                             Ok(()) => ok += 1,
                             Err(e) => err = Some(e),
                         }
                     }
                     let mut lines = vec![format!("Sending signal {signame} to pid {pid}{}!", if tree { " + tree" } else { "" })];
-                    if let Some(e) = err {
+                    if ok == 0 && err.is_none() {
+                        lines.push("Process is gone (pid exited or reused)".into());
+                    } else if let Some(e) = err {
                         lines.push(format!("Failed: {e}"));
                         if ok > 0 {
                             lines.push(format!("{ok}/{} processes signalled", targets.len()));
                         }
                     } else {
-                        lines.push(if targets.len() > 1 { format!("Success! ({} processes)", targets.len()) } else { "Success!".into() });
+                        lines.push(if ok > 1 { format!("Success! ({ok} processes)") } else { "Success!".into() });
+                        if gone > 0 {
+                            lines.push(format!("{gone} already gone, skipped"));
+                        }
                     }
-                    me.mode = Mode::Signal { sig, verb, signame, pid, name: name.clone(), sel, result: Some(lines) };
+                    me.mode = Mode::Signal { sig, verb, signame, pid, start, name: name.clone(), sel, result: Some(lines) };
                 };
                 match k {
-                    Key::Left | Key::BackTab => self.mode = Mode::Signal { sig, verb, signame, pid, name, sel: (sel + 2) % 3, result },
-                    Key::Right | Key::Tab => self.mode = Mode::Signal { sig, verb, signame, pid, name, sel: (sel + 1) % 3, result },
+                    Key::Left | Key::BackTab => self.mode = Mode::Signal { sig, verb, signame, pid, start, name, sel: (sel + 2) % 3, result },
+                    Key::Right | Key::Tab => self.mode = Mode::Signal { sig, verb, signame, pid, start, name, sel: (sel + 1) % 3, result },
                     Key::Char('y') | Key::Char('Y') => act(self, false),
                     Key::Char('a') | Key::Char('A') => act(self, true),
                     Key::Enter => match sel {
@@ -1347,7 +1386,7 @@ impl App {
 
     fn signal_dialog(&mut self, c: char) {
         let Some(pid) = self.sel_pid() else { return };
-        let name = self.procs.map.get(&pid).map(|p| p.name.clone()).unwrap_or_default();
+        let Some((name, start)) = self.procs.map.get(&pid).map(|p| (p.name.clone(), p.start)) else { return };
         let (sig, verb, signame) = match c {
             't' => (libc::SIGTERM, "terminate", "SIGTERM - 15"),
             'k' => (libc::SIGKILL, "kill", "SIGKILL - 9"),
@@ -1358,7 +1397,7 @@ impl App {
             }
         };
         let result = (!procs::signal_allowed(pid)).then(|| vec![format!("Not sending {signame} to pid {pid}!"), "pid 0 and 1 (kernel, init/launchd) are".into(), "protected: that would stop the system".into()]);
-        self.mode = Mode::Signal { sig, verb, signame, pid, name, sel: 0, result };
+        self.mode = Mode::Signal { sig, verb, signame, pid, start, name, sel: 0, result };
     }
 
     fn ensure_visible(&mut self) {
@@ -1620,7 +1659,7 @@ fn main() {
             }
             "-d" | "--debug" => debug = true,
             "-h" | "--help" => {
-                println!("rbtop {} — bashtop rewritten in Rust\n\nUSAGE: rbtop [-d|--debug] [-v|--version]\n\n  -d  show collect/draw timings in the process box\n\nConfig: ~/.config/rbtop/rbtop.cfg (bashtop.cfg is read as fallback)\nThemes: bashtop/bpytop/btop .theme files in ~/.config/rbtop/themes", env!("CARGO_PKG_VERSION"));
+                println!("rbtop {} — bashtop rewritten in Rust\n\nUSAGE: rbtop [-d|--debug] [-v|--version]\n\n  -d  show collect/draw timings on the cpu box border\n\nConfig: ~/.config/rbtop/rbtop.cfg (bashtop.cfg is read as fallback)\nThemes: bashtop/bpytop/btop .theme files in ~/.config/rbtop/themes", env!("CARGO_PKG_VERSION"));
                 return;
             }
             _ => {

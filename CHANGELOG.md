@@ -3,6 +3,40 @@
 All notable changes to rbtop. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.3] - 2026-11-28
+
+Second half of the code audit: the low-priority findings and clean-ups.
+
+### Fixed
+- Kill dialog: a process that exited (or whose pid was reused by a new
+  process) between opening the dialog and confirming it is no longer
+  signalled; the dialog says "Process is gone" instead. Checked by start time.
+- "+Tree" can no longer loop forever on a racy parent/child cycle, and collects
+  the tree in one pass instead of one scan of all processes per child.
+- Clicking a button while typing a filter no longer appends the button's
+  letter to the filter; the filter input ends and the button acts.
+- The battery tag no longer overlaps the clock on narrow terminals (80 columns):
+  its meter shrinks or goes, and the tag is left out before it would overlap.
+- Combining marks and other zero-width characters no longer shift process rows.
+  Decomposed Latin letters (macOS keeps names in NFD) are composed, "U" + "¨"
+  shows as "Ü".
+- Linux: on systems with two CPU sockets the per-core temperatures of the second
+  socket showed the first socket's values (core ids repeat per socket).
+- The config is written to a temporary file and renamed, so it can no longer be
+  left truncated. Values may contain `"` now.
+- macOS: a USB disk plugged in under the diskN of a previously removed one shows
+  disk io again.
+- nvidia-smi is restarted with the new interval when the update time changes.
+- macOS: the HID temperature fallback averages the sensors like the SMC path.
+- `--help` names the right place of the `-d` timings.
+
+### Changed
+- CI: every release archive comes with a `.sha256` file, GitHub Actions are
+  pinned to commit hashes, cross is pinned to 0.2.5, and a separate clippy job
+  (`-D warnings`, Linux and macOS) runs on every push.
+- Minimum Rust version declared in Cargo.toml (`rust-version = "1.77"`).
+- No more clippy warnings.
+
 ## [0.3.2] - 2026-11-28
 
 Security and robustness fixes from a full code audit.
@@ -102,6 +136,7 @@ Security and robustness fixes from a full code audit.
   config and theme format, plus the feasible feature requests from the bashtop
   issue tracker (#17, #26/#221, #48, #63, #73, #97, #119, #185, #199).
 
+[0.3.3]: https://github.com/gbomacfly/rbtop/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/gbomacfly/rbtop/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/gbomacfly/rbtop/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/gbomacfly/rbtop/compare/v0.2.1...v0.3.0

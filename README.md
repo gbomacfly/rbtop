@@ -169,6 +169,12 @@ release:
 - macOS: `aarch64-apple-darwin` (Apple Silicon), `x86_64-apple-darwin` (Intel) and
   `universal-apple-darwin` (both in one file)
 
+Every archive comes with a `.sha256` file to check the download:
+
+```sh
+shasum -a 256 -c rbtop-v0.3.3-x86_64-unknown-linux-musl.tar.gz.sha256
+```
+
 ## macOS
 
 Since 0.2.0 rbtop also runs on macOS, since 0.3.0 with temperatures, disk I/O, GPU and

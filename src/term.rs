@@ -88,7 +88,7 @@ impl Screen {
         let mut cx = x;
         for ch in s.chars() {
             self.set(cx, y, sanitize(ch), fg, bold);
-            cx += 1;
+            cx = cx.saturating_add(1);
         }
         cx
     }
@@ -97,7 +97,7 @@ impl Screen {
         let mut cx = x;
         for ch in s.chars().take(max) {
             self.set(cx, y, sanitize(ch), fg, bold);
-            cx += 1;
+            cx = cx.saturating_add(1);
         }
         cx
     }

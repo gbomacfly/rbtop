@@ -126,6 +126,13 @@ pub fn io_bytes(pid: i32) -> Option<(u64, u64)> {
     Some((r?, w?))
 }
 
+pub fn start_time(pid: i32) -> Option<u64> {
+    let b = std::fs::read(format!("/proc/{pid}/stat")).ok()?;
+    let r = b.iter().rposition(|&c| c == b')')?;
+    // after ")": state(0) ppid(1) ... starttime(19)
+    std::str::from_utf8(&b[r + 1..]).ok()?.split_ascii_whitespace().nth(19)?.parse().ok()
+}
+
 pub fn read_state(pid: i32) -> Option<char> {
     let b = std::fs::read(format!("/proc/{pid}/stat")).ok()?;
     let r = b.iter().rposition(|&c| c == b')')?;

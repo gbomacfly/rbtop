@@ -36,12 +36,19 @@ impl Default for Sampler {
                 (1, 1)
             }
         };
-        Sampler { pids: Vec::new(), numer, denom, boot_ms: boot_time_ms() }
+        Sampler { pids: Vec::new(), numer, denom, boot_ms: boot_ms() }
     }
 }
 
+/// kern.boottime read once: it moves when the wall clock is adjusted, and
+/// start times must stay comparable between the sampler and start_time().
+fn boot_ms() -> u64 {
+    static BOOT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *BOOT.get_or_init(boot_time_ms)
+}
+
 /// kern.boottime in ms since the epoch.
-pub fn boot_time_ms() -> u64 {
+fn boot_time_ms() -> u64 {
     unsafe {
         let mut mib = [libc::CTL_KERN, libc::KERN_BOOTTIME];
         let mut tv: libc::timeval = zeroed();
@@ -191,6 +198,11 @@ pub fn io_bytes(pid: i32) -> Option<(u64, u64)> {
         let r = libc::proc_pid_rusage(pid, libc::RUSAGE_INFO_V2, &mut ri as *mut _ as *mut libc::rusage_info_t);
         (r == 0).then_some((ri.ri_diskio_bytesread, ri.ri_diskio_byteswritten))
     }
+}
+
+pub fn start_time(pid: i32) -> Option<u64> {
+    let b = bsd_info(pid)?;
+    Some((b.pbi_start_tvsec * 1000 + b.pbi_start_tvusec / 1000).saturating_sub(boot_ms()))
 }
 
 pub fn read_state(pid: i32) -> Option<char> {
