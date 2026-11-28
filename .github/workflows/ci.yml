@@ -37,7 +37,7 @@ jobs:
       - run: |
           mkdir dist
           cp target/${{ matrix.target }}/release/rbtop dist/
-          cp -r themes README.md LICENSE dist/
+          cp -r themes README.md README.de.md LICENSE dist/
           tar czf rbtop-${{ github.ref_name }}-${{ matrix.target }}.tar.gz -C dist .
       - uses: softprops/action-gh-release@v2
         with:
@@ -59,7 +59,7 @@ jobs:
       - run: |
           for t in aarch64-apple-darwin x86_64-apple-darwin universal-apple-darwin; do
             mkdir -p dist-$t
-            cp -r themes README.md LICENSE dist-$t/
+            cp -r themes README.md README.de.md LICENSE dist-$t/
           done
           cp target/aarch64-apple-darwin/release/rbtop dist-aarch64-apple-darwin/
           cp target/x86_64-apple-darwin/release/rbtop dist-x86_64-apple-darwin/

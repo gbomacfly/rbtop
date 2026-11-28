@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="500" viewBox="0 0 960 500" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">rbtop vs. bashtop</title>
+<desc id="d">CPU · ~70 Prozesse: rbtop 0,07 %, bashtop (Bash) 7,8 %, bashtop (psutil) 9,4 %; CPU · ~1070 Prozesse: rbtop 0,33 %, bashtop (Bash) 8,1 %, bashtop (psutil) 15,7 %; Speicher (RSS) · ~70 Prozesse: rbtop 3,5 MiB, bashtop (Bash) 17 MiB, bashtop (psutil) 34 MiB; Tastendruck → neues Bild (Median): rbtop 0,5 ms, bashtop (Bash) 56 ms, bashtop (psutil) 48 ms</desc>
+<rect width="960" height="500" rx="8" fill="#191919"/>
+<text x="28" y="40" font-size="20" font-weight="600" fill="#efefef">rbtop vs. bashtop</text>
+<text x="28" y="62" font-size="12.5" fill="#9c9c9c">Linux-VM, 2 vCPU · Terminal 160×45 · Takt 2500 ms · Mittel aus 2 × 60 s · weniger ist besser</text>
+<rect x="28" y="78" width="12" height="12" rx="3" fill="#338ced"/>
+<text x="46" y="88.5" font-size="12.5" fill="#efefef">rbtop</text>
+<rect x="107" y="78" width="12" height="12" rx="3" fill="#e76624"/>
+<text x="125" y="88.5" font-size="12.5" fill="#efefef">bashtop (Bash)</text>
+<rect x="250" y="78" width="12" height="12" rx="3" fill="#00a888"/>
+<text x="268" y="88.5" font-size="12.5" fill="#efefef">bashtop (psutil)</text>
+<text x="28" y="126" font-size="14" font-weight="600" fill="#efefef">CPU · ~70 Prozesse</text>
+<line x1="146.0" y1="138" x2="146.0" y2="234" stroke="#2f2f2f" stroke-width="1"/>
+<text x="146.0" y="250" font-size="11" text-anchor="middle" fill="#9c9c9c">0</text>
+<line x1="260.0" y1="138" x2="260.0" y2="234" stroke="#2f2f2f" stroke-width="1"/>
+<text x="260.0" y="250" font-size="11" text-anchor="middle" fill="#9c9c9c">10</text>
+<line x1="374.0" y1="138" x2="374.0" y2="234" stroke="#2f2f2f" stroke-width="1"/>
+<text x="374.0" y="250" font-size="11" text-anchor="middle" fill="#9c9c9c">20</text>
+<text x="374.0" y="266" font-size="11" text-anchor="end" fill="#9c9c9c">% eines Kerns</text>
+<text x="136" y="158.5" font-size="12.5" text-anchor="end" fill="#efefef">rbtop</text>
+<g fill="#338ced"><rect x="146.0" y="144.0" width="1.5" height="20" rx="0.4"/></g>
+<text x="153.5" y="158.5" font-size="12.5" font-weight="600" fill="#efefef">0,07 %</text>
+<text x="136" y="190.5" font-size="12.5" text-anchor="end" fill="#efefef">bashtop (Bash)</text>
+<g fill="#e76624"><path d="M146.0,176.0 h85.3 a4,4 0 0 1 4,4 v12 a4,4 0 0 1 -4,4 h-85.3 z"/></g>
+<text x="241.3" y="190.5" font-size="12.5" font-weight="600" fill="#efefef">7,8 %</text>
+<text x="283.3" y="190.5" font-size="12" fill="#9c9c9c">×117</text>
+<text x="136" y="222.5" font-size="12.5" text-anchor="end" fill="#efefef">bashtop (psutil)</text>
+<g fill="#00a888"><path d="M146.0,208.0 h103.2 a4,4 0 0 1 4,4 v12 a4,4 0 0 1 -4,4 h-103.2 z"/></g>
+<text x="259.2" y="222.5" font-size="12.5" font-weight="600" fill="#efefef">9,4 %</text>
+<text x="301.2" y="222.5" font-size="12" fill="#9c9c9c">×140</text>
+<text x="494" y="126" font-size="14" font-weight="600" fill="#efefef">CPU · ~1070 Prozesse</text>
+<line x1="612.0" y1="138" x2="612.0" y2="234" stroke="#2f2f2f" stroke-width="1"/>
+<text x="612.0" y="250" font-size="11" text-anchor="middle" fill="#9c9c9c">0</text>
+<line x1="726.0" y1="138" x2="726.0" y2="234" stroke="#2f2f2f" stroke-width="1"/>
+<text x="726.0" y="250" font-size="11" text-anchor="middle" fill="#9c9c9c">10</text>
+<line x1="840.0" y1="138" x2="840.0" y2="234" stroke="#2f2f2f" stroke-width="1"/>
+<text x="840.0" y="250" font-size="11" text-anchor="middle" fill="#9c9c9c">20</text>
+<text x="840.0" y="266" font-size="11" text-anchor="end" fill="#9c9c9c">% eines Kerns</text>
+<text x="602" y="158.5" font-size="12.5" text-anchor="end" fill="#efefef">rbtop</text>
+<g fill="#338ced"><rect x="612.0" y="144.0" width="3.7" height="20" rx="1.9"/></g>
+<text x="621.7" y="158.5" font-size="12.5" font-weight="600" fill="#efefef">0,33 %</text>
+<text x="602" y="190.5" font-size="12.5" text-anchor="end" fill="#efefef">bashtop (Bash)</text>
+<g fill="#e76624"><path d="M612.0,176.0 h88.7 a4,4 0 0 1 4,4 v12 a4,4 0 0 1 -4,4 h-88.7 z"/></g>
+<text x="710.7" y="190.5" font-size="12.5" font-weight="600" fill="#efefef">8,1 %</text>
+<text x="752.7" y="190.5" font-size="12" fill="#9c9c9c">×25</text>
+<text x="602" y="222.5" font-size="12.5" text-anchor="end" fill="#efefef">bashtop (psutil)</text>
+<g fill="#00a888"><path d="M612.0,208.0 h174.5 a4,4 0 0 1 4,4 v12 a4,4 0 0 1 -4,4 h-174.5 z"/></g>
+<text x="796.5" y="222.5" font-size="12.5" font-weight="600" fill="#efefef">15,7 %</text>
+<text x="845.7" y="222.5" font-size="12" fill="#9c9c9c">×48</text>
+<text x="28" y="320" font-size="14" font-weight="600" fill="#efefef">Speicher (RSS) · ~70 Prozesse</text>
+<line x1="146.0" y1="332" x2="146.0" y2="428" stroke="#2f2f2f" stroke-width="1"/>
+<text x="146.0" y="444" font-size="11" text-anchor="middle" fill="#9c9c9c">0</text>
+<line x1="260.0" y1="332" x2="260.0" y2="428" stroke="#2f2f2f" stroke-width="1"/>
+<text x="260.0" y="444" font-size="11" text-anchor="middle" fill="#9c9c9c">25</text>
+<line x1="374.0" y1="332" x2="374.0" y2="428" stroke="#2f2f2f" stroke-width="1"/>
+<text x="374.0" y="444" font-size="11" text-anchor="middle" fill="#9c9c9c">50</text>
+<text x="374.0" y="460" font-size="11" text-anchor="end" fill="#9c9c9c">MiB</text>
+<text x="136" y="352.5" font-size="12.5" text-anchor="end" fill="#efefef">rbtop</text>
+<g fill="#338ced"><path d="M146.0,338.0 h11.7 a4,4 0 0 1 4,4 v12 a4,4 0 0 1 -4,4 h-11.7 z"/></g>
+<text x="167.7" y="352.5" font-size="12.5" font-weight="600" fill="#efefef">3,5 MiB</text>
+<text x="136" y="384.5" font-size="12.5" text-anchor="end" fill="#efefef">bashtop (Bash)</text>
+<g fill="#e76624"><path d="M146.0,370.0 h72.4 a4,4 0 0 1 4,4 v12 a4,4 0 0 1 -4,4 h-72.4 z"/></g>
+<text x="228.4" y="384.5" font-size="12.5" font-weight="600" fill="#efefef">17 MiB</text>
+<text x="277.6" y="384.5" font-size="12" fill="#9c9c9c">×5</text>
+<text x="136" y="416.5" font-size="12.5" text-anchor="end" fill="#efefef">bashtop (psutil)</text>
+<g fill="#00a888"><path d="M146.0,402.0 h152.0 a4,4 0 0 1 4,4 v12 a4,4 0 0 1 -4,4 h-152.0 z"/></g>
+<text x="308.0" y="416.5" font-size="12.5" font-weight="600" fill="#efefef">34 MiB</text>
+<text x="357.2" y="416.5" font-size="12" fill="#9c9c9c">×10</text>
+<text x="494" y="320" font-size="14" font-weight="600" fill="#efefef">Tastendruck → neues Bild (Median)</text>
+<line x1="612.0" y1="332" x2="612.0" y2="428" stroke="#2f2f2f" stroke-width="1"/>
+<text x="612.0" y="444" font-size="11" text-anchor="middle" fill="#9c9c9c">0</text>
+<line x1="726.0" y1="332" x2="726.0" y2="428" stroke="#2f2f2f" stroke-width="1"/>
+<text x="726.0" y="444" font-size="11" text-anchor="middle" fill="#9c9c9c">50</text>
+<line x1="840.0" y1="332" x2="840.0" y2="428" stroke="#2f2f2f" stroke-width="1"/>
+<text x="840.0" y="444" font-size="11" text-anchor="middle" fill="#9c9c9c">100</text>
+<text x="840.0" y="460" font-size="11" text-anchor="end" fill="#9c9c9c">ms</text>
+<text x="602" y="352.5" font-size="12.5" text-anchor="end" fill="#efefef">rbtop</text>
+<g fill="#338ced"><rect x="612.0" y="338.0" width="1.5" height="20" rx="0.6"/></g>
+<text x="619.5" y="352.5" font-size="12.5" font-weight="600" fill="#efefef">0,5 ms</text>
+<text x="602" y="384.5" font-size="12.5" text-anchor="end" fill="#efefef">bashtop (Bash)</text>
+<g fill="#e76624"><path d="M612.0,370.0 h123.1 a4,4 0 0 1 4,4 v12 a4,4 0 0 1 -4,4 h-123.1 z"/></g>
+<text x="745.1" y="384.5" font-size="12.5" font-weight="600" fill="#efefef">56 ms</text>
+<text x="787.1" y="384.5" font-size="12" fill="#9c9c9c">×112</text>
+<text x="602" y="416.5" font-size="12.5" text-anchor="end" fill="#efefef">bashtop (psutil)</text>
+<g fill="#00a888"><path d="M612.0,402.0 h105.3 a4,4 0 0 1 4,4 v12 a4,4 0 0 1 -4,4 h-105.3 z"/></g>
+<text x="727.3" y="416.5" font-size="12.5" font-weight="600" fill="#efefef">48 ms</text>
+<text x="769.3" y="416.5" font-size="12" fill="#9c9c9c">×96</text>
+</svg>

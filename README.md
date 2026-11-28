@@ -1,239 +1,251 @@
 # rbtop – bashtop in Rust
 
-Ein Nachbau von [bashtop](https://github.com/aristocratos/bashtop) (aristocratos) in Rust:
-gleiches Layout, **gleiche Tastenbelegung**, gleiches Config- und Theme-Format, aber ein
-Bruchteil der CPU-Last. Dazu kommen die umsetzbaren Feature-Requests aus den GitHub-Issues
-des Originals.
+**English** · [Deutsch](README.de.md)
+
+A rewrite of [bashtop](https://github.com/aristocratos/bashtop) (aristocratos) in Rust:
+same layout, **same key bindings**, same config and theme format, at a fraction of the
+CPU cost. On top of that come the feasible feature requests from the original's GitHub
+issues.
 
 > [!WARNING]
-> **Komplett „vibe-gecoded“.** Der gesamte Code, die Tests und diese README wurden von
-> einer KI (Claude, Anthropic) geschrieben. Gebaut und getestet wurde automatisiert in
-> einer Sandbox und anschließend auf echten Systemen, aber **kein Mensch hat den Code
-> Zeile für Zeile reviewt**. rbtop läuft meist als root und kann Signale an beliebige
-> Prozesse schicken (`t`/`k`/`i`/`p`), also mit entsprechender Vorsicht benutzen.
-> Benutzung auf eigene Gefahr, siehe [LICENSE](LICENSE). Bugs und Reviews sind als Issue
-> willkommen.
+> **Fully "vibe-coded".** All code, tests and this README were written by an AI
+> (Claude, Anthropic). It was built and tested automatically in a sandbox and then on
+> real systems, but **no human has reviewed the code line by line**. rbtop usually runs
+> as root and can send signals to any process (`t`/`k`/`i`/`p`), so use it with
+> appropriate care. Use at your own risk, see [LICENSE](LICENSE). Bug reports and
+> reviews are welcome as issues.
 
 ![rbtop](docs/screenshot.png)
 
-Abhängigkeiten: nur das `libc`-Crate. Kein TUI-Framework, kein psutil, keine
-externen Programme pro Tick.
+Dependencies: only the `libc` crate. No TUI framework, no psutil, no external programs
+per tick.
 
 ## Speed
 
-Benchmark vom 28.11.2026: rbtop 0.3.1 gegen bashtop 0.9.25, beide bashtop-Modi
-(psutil = Standard, wenn psutil installiert ist; reines Bash). Gleiche Bedingungen
-für alle: Linux-VM mit 2 vCPUs (x86_64), Terminal 160×45, Takt 2500 ms, je zwei
-Läufe à 60 s nach 6 s Einschwingzeit.
+Benchmark from 2026-11-28: rbtop 0.3.1 against bashtop 0.9.25, in both bashtop modes
+(psutil = the default when psutil is installed; pure bash). Same conditions for all:
+Linux VM with 2 vCPUs (x86_64), 160×45 terminal, 2500 ms update interval, two runs of
+60 s each after 6 s of warm-up.
 
-**~70 Prozesse (normaler Server-Leerlauf):**
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/bench-en-dark.svg">
+  <img alt="Benchmark rbtop vs bashtop: CPU, memory and key latency" src="docs/bench-en-light.svg">
+</picture>
 
-| | rbtop | bashtop Bash | bashtop psutil |
+**~70 processes (typical idle server):**
+
+| | rbtop | bashtop bash | bashtop psutil |
 |---|---|---|---|
-| CPU (% eines Kerns) | **0,07 %** | 7,8 % (×117) | 9,4 % (×140) |
-| Speicher (RSS) | **3,5 MiB** | 16,8 MiB (×5) | 34,2 MiB (×10) |
-| Start bis erstes Bild | **0,11 s** | 1,24 s | 1,50 s |
-| Reaktion auf Taste (Median / max) | **0,5 / 1,2 ms** | 56 / 76 ms | 48 / 77 ms |
-| Gestartete Hilfsprozesse | **0/s** | 24/s | 22/s |
-| Terminal-Ausgabe | **0,6 KiB/s** | 3,6 KiB/s | 4,1 KiB/s |
+| CPU (% of one core) | **0.07 %** | 7.8 % (×117) | 9.4 % (×140) |
+| Memory (RSS) | **3.5 MiB** | 16.8 MiB (×5) | 34.2 MiB (×10) |
+| Start to first frame | **0.11 s** | 1.24 s | 1.50 s |
+| Key press to redraw (median / max) | **0.5 / 1.2 ms** | 56 / 76 ms | 48 / 77 ms |
+| Helper processes started | **0/s** | 24/s | 22/s |
+| Terminal output | **0.6 KiB/s** | 3.6 KiB/s | 4.1 KiB/s |
 
-**~1070 Prozesse:**
+**~1070 processes:**
 
-| | rbtop | bashtop Bash | bashtop psutil |
+| | rbtop | bashtop bash | bashtop psutil |
 |---|---|---|---|
-| CPU (% eines Kerns) | **0,33 %** | 8,1 % (×25) | 15,7 % (×48) |
-| Speicher (RSS) | **3,6 MiB** | 17,5 MiB | 37,0 MiB |
-| Start bis erstes Bild | **0,27 s** | 1,17 s | 1,86 s |
-| Reaktion auf Taste (Median / max) | **0,6 / 3,4 ms** | 38 / 135 ms | 38 / 274 ms |
+| CPU (% of one core) | **0.33 %** | 8.1 % (×25) | 15.7 % (×48) |
+| Memory (RSS) | **3.6 MiB** | 17.5 MiB | 37.0 MiB |
+| Start to first frame | **0.27 s** | 1.17 s | 1.86 s |
+| Key press to redraw (median / max) | **0.6 / 3.4 ms** | 38 / 135 ms | 38 / 274 ms |
 
-Gemessen wurde:
+What was measured:
 
-- **CPU:** User- plus System-Zeit des ganzen Prozessbaums, einschließlich der
-  kurzlebigen Hilfsprozesse, die bashtop startet (`ps`, `awk`, `grep` usw.).
-- **Speicher:** mittlerer RSS-Wert des Prozessbaums über die Messdauer.
-- **Hilfsprozesse:** neue Prozesse pro Sekunde laut `/proc/stat`. Der Leerlauf des
-  Systems lag bei 0,08/s, rbtops gemessene 0,06/s sind also Rauschen.
-- **Reaktion auf Taste:** Zeit vom Druck auf Pfeil runter bis zum ersten neu
-  gezeichneten Byte, Median und Maximum aus 15 Tastendrücken.
-- **Startzeit:** vom Programmstart bis zum ersten vollständigen Bild. Bei rbtop sind
-  darin absichtlich 100 ms für die erste CPU-Messung enthalten.
+- **CPU:** user plus system time of the whole process tree, including the short-lived
+  helper processes bashtop starts (`ps`, `awk`, `grep` etc.).
+- **Memory:** mean RSS of the process tree over the measurement window.
+- **Helper processes:** new processes per second according to `/proc/stat`. The idle
+  system was at 0.08/s, so rbtop's measured 0.06/s is noise.
+- **Key press to redraw:** time from pressing Down to the first byte of the redraw,
+  median and maximum of 15 key presses.
+- **Start time:** from launch to the first complete frame. rbtop's number includes a
+  deliberate 100 ms wait for the first CPU sample.
 
-Unter Last holt bashtops Bash-Modus auf, weil er pro Tick einmal das in C geschriebene
-`ps` aufruft. Bei rbtop steigen die Kosten mit jedem Prozess, weil der Kernel jede
-`/proc/<pid>/stat`-Datei einzeln erzeugen muss. Der psutil-Modus wird bei vielen
-Prozessen am langsamsten, weil er alle Prozesse in Python durchläuft.
+Under load bashtop's bash mode catches up, because it calls `ps` (written in C) once per
+tick. rbtop's cost grows with every process, because the kernel has to generate each
+`/proc/<pid>/stat` file individually. The psutil mode becomes the slowest with many
+processes, because it walks all of them in Python.
 
-Die Messung lässt sich mit [`bench/bench.py`](bench/bench.py) wiederholen; die
-Rohdaten liegen in [`bench/results-2026-11-28.jsonl`](bench/results-2026-11-28.jsonl).
+The measurement can be repeated with [`bench/bench.py`](bench/bench.py); the raw data is
+in [`bench/results-2026-11-28.jsonl`](bench/results-2026-11-28.jsonl).
 
 ```sh
 python3 bench/bench.py rbtop 60 -- ./target/release/rbtop
-python3 bench/bench.py bashtop 60 -- bash /pfad/zu/bashtop
-python3 bench/spawn_load.py 1000    # 1000 Last-Prozesse (sleep 3600)
+python3 bench/bench.py bashtop 60 -- bash /path/to/bashtop
+python3 bench/spawn_load.py 1000    # 1000 load processes (sleep 3600)
+python3 bench/plot.py bench/results-2026-11-28.jsonl   # regenerate the chart
 ```
 
-Warum es so schnell ist:
+Why it is fast:
 
-- **Diff-Renderer:** zwei Zellpuffer; geschrieben werden nur geänderte Zellen, mit
-  minimalen Cursor-Sprüngen und SGR-Wechseln, alles in *einem* `write()` mit Synchronized
-  Output (`?2026`).
-- **Prozess-Hot-Path:** pro Tick wird pro Prozess nur `/proc/<pid>/stat` gelesen, via
-  `openat()` relativ zu einem offenen `/proc`-Handle in einen wiederverwendeten Puffer.
-  `cmdline`, UID und cgroup werden nur einmal pro neuer PID gelesen (bzw. nach `exec`).
-- **Kein Polling:** `poll()` schläft bis zum nächsten Tick, zur nächsten Sekunde (Uhr)
-  oder bis zum nächsten Tastendruck; Eingaben werden sofort gezeichnet.
-- **nvidia-smi** läuft, wenn vorhanden, *einmal* dauerhaft im Streaming-Modus (`-lms`),
-  statt jeden Tick neu gestartet zu werden.
-- Release-Profil: LTO, `codegen-units=1`, `panic=abort`, gestrippt (~770 KB).
+- **Diff renderer:** two cell buffers; only changed cells are written, with minimal
+  cursor jumps and SGR changes, all in *one* `write()` with synchronized output
+  (`?2026`).
+- **Process hot path:** per tick and process only `/proc/<pid>/stat` is read, via
+  `openat()` relative to an open `/proc` handle into a reused buffer. `cmdline`, UID and
+  cgroup are read once per new PID (or after `exec`).
+- **No polling:** `select()` sleeps until the next tick, the next second (clock) or the
+  next key press; input is drawn immediately.
+- **nvidia-smi**, if present, runs *once* permanently in streaming mode (`-lms`) instead
+  of being started every tick.
+- Release profile: LTO, `codegen-units=1`, `panic=abort`, stripped (about 750–850 KB).
 
-Mit `rbtop -d` siehst du die Zeiten für Sammeln/Zeichnen live in der Prozessbox.
+With `rbtop -d` you see the collect/draw timings live at the bottom of the CPU box.
 
-## Tasten (wie im Original)
+## Keys (as in the original)
 
-| Taste | Funktion |
+| Key | Function |
 |---|---|
-| Esc, M, m | Hauptmenü |
-| F2, O, o | Optionen |
-| F1, H, h | Hilfe |
-| Ctrl-C, Q, q | Beenden |
-| +, A, a / -, S, s | Update-Timer ±100 ms |
-| Up / Down (Tab) | Auswahl in der Prozessliste |
-| Enter | Detailansicht des ausgewählten Prozesses (nochmal: schließen) |
-| Pg Up / Pg Down | Eine Seite springen |
-| Home / End | Erste / letzte Seite |
-| Left / Right | Vorherige / nächste Sortierung |
-| b, B / n, N | Vorheriges / nächstes Netzwerkgerät |
-| E, e | Baumansicht umschalten |
-| R, r | Sortierung umkehren |
-| F, f | Filter eingeben (Enter übernimmt, Esc verwirft) |
-| C, c | Filter löschen |
-| T, t | SIGTERM an ausgewählten Prozess |
-| K, k | SIGKILL an ausgewählten Prozess |
-| I, i | SIGINT an ausgewählten Prozess |
+| Esc, M, m | Main menu |
+| F2, O, o | Options |
+| F1, H, h | Help |
+| Ctrl-C, Q, q | Quit |
+| +, A, a / -, S, s | Update timer ±100 ms |
+| Up / Down (Tab) | Select in the process list |
+| Enter | Detailed view of the selected process (again: close) |
+| Pg Up / Pg Down | Jump one page |
+| Home / End | First / last page |
+| Left / Right | Previous / next sort column |
+| b, B / n, N | Previous / next network device |
+| E, e | Toggle tree view |
+| R, r | Reverse sort order |
+| F, f | Enter a filter (Enter keeps it, Esc discards it) |
+| C, c | Clear the filter |
+| T, t | SIGTERM to the selected process |
+| K, k | SIGKILL to the selected process |
+| I, i | SIGINT to the selected process |
 
-**Neu** (alle Tasten waren im Original frei):
+**New** (all of these keys were unused in the original):
 
-| Taste | Funktion |
+| Key | Function |
 |---|---|
-| P, p | Pause/Fortsetzen: SIGSTOP bzw. SIGCONT, je nach aktuellem Status (#185) |
-| Z, z | Download/Upload-Summen zurücksetzen (#63) |
-| Ctrl-Z | rbtop in den Hintergrund (`fg` holt es zurück) |
-| Maus | Scrollen und Klicken in der Prozessliste (Klick auf ausgewählte Zeile = Details), alle `┤…├`-Buttons sind klickbar |
-| Maus auf Spaltenkopf | Nach dieser Spalte sortieren, erneuter Klick kehrt die Reihenfolge um (bei Cpu% bleibt lazy/responsive erhalten) |
+| P, p | Pause/resume: SIGSTOP or SIGCONT, depending on the current state (#185) |
+| Z, z | Reset download/upload totals (#63) |
+| Ctrl-Z | Suspend rbtop to the shell (`fg` brings it back) |
+| Mouse | Scroll and click in the process list (clicking the selected row = details), all `┤…├` buttons are clickable |
+| Mouse on column header | Sort by that column, click again to reverse (for Cpu%, lazy/responsive is kept) |
 
-Im Signal-Dialog gibt es zusätzlich **[ +Tree ]**: schickt das Signal an den Prozess und
-alle seine Nachfahren (Wunsch aus #185, z. B. Blender-Renderjobs pausieren).
+The signal dialog additionally offers **[ +Tree ]**: sends the signal to the process and
+all of its descendants (requested in #185, e.g. to pause Blender render jobs).
 
-## Feature-Requests aus den bashtop-Issues
+## Feature requests from the bashtop issues
 
-| Issue | Wunsch | Status in rbtop |
+| Issue | Request | Status in rbtop |
 |---|---|---|
-| #17 | iotop-artige I/O-Werte | ✅ Lese-/Schreibraten pro Disk (`/proc/diskstats`, **ZFS-Datasets über kstat**), pro Prozess in der Detailansicht (`/proc/<pid>/io`) |
-| #26, #221 | GPU-Auslastung | ✅ AMD über sysfs (`gpu_busy_percent`, VRAM, Temperatur), NVIDIA über *ein* dauerlaufendes `nvidia-smi` |
-| #48 | zenpower/k10temp-Temperaturen | ✅ hwmon: coretemp (pro Kern), k10temp (Tdie/Tctl), zenpower, cpu_thermal (ARM), acpitz/x86_pkg_temp als Fallback |
-| #63 | Netzwerk-Summen zurücksetzen | ✅ Taste `z` |
-| #73 | Graphen statt Balken für Speicher | ✅ Option `mem_graphs` |
-| #97 | Docker-Container-Infos | ✅ Container pro Prozess erkannt: Docker (inkl. Name), Podman, **Proxmox-LXC (`CT 101 (hostname)`) und -VMs (`VM 105 (name)`)**, libvirt, k8s; in der Detailansicht und im Filter suchbar |
-| #119 | zram-Infos | ✅ zram-Geräte mit Original → komprimiert und Ratio in der Mem-Box |
-| #185 | SIGSTOP/SIGCONT, auch für Kindprozesse | ✅ Taste `p`, Option „+Tree“ |
-| #199 | Akkustand | ✅ in der CPU-Box-Titelleiste mit Lade-/Entladesymbol |
-| – | Maussteuerung (in bpytop nachgereicht) | ✅ |
-| #230 | Weitere Themes | ✅ lädt alle bashtop/bpytop/btop-`.theme`-Dateien unverändert, 9 Original-Themes liegen bei |
-| #93 | Box mit eigenem Kommando (tail -f …) | ❌ nicht umgesetzt |
-| #231 | Ausgabe auf freie VT umleiten | ❌ nicht nötig: `openvt -s -- rbtop` |
-| #235 | Windows | ❌ (Linux und macOS, siehe unten) |
+| #17 | iotop-like I/O values | ✅ read/write rates per disk (`/proc/diskstats`, **ZFS datasets via kstat**), per process in the detailed view (`/proc/<pid>/io`) |
+| #26, #221 | GPU usage | ✅ AMD via sysfs (`gpu_busy_percent`, VRAM, temperature), NVIDIA via *one* long-running `nvidia-smi` |
+| #48 | zenpower/k10temp temperatures | ✅ hwmon: coretemp (per core), k10temp (Tdie/Tctl), zenpower, cpu_thermal (ARM), acpitz/x86_pkg_temp as fallback |
+| #63 | Reset network totals | ✅ key `z` |
+| #73 | Graphs instead of meters for memory | ✅ option `mem_graphs` |
+| #97 | Docker container info | ✅ container detected per process: Docker (incl. name), Podman, **Proxmox LXC (`CT 101 (hostname)`) and VMs (`VM 105 (name)`)**, libvirt, k8s; shown in the detailed view and searchable with the filter |
+| #119 | zram info | ✅ zram devices with original → compressed size and ratio in the mem box |
+| #185 | SIGSTOP/SIGCONT, also for child processes | ✅ key `p`, "+Tree" option |
+| #199 | Battery level | ✅ in the CPU box title bar with charge/discharge symbol |
+| – | Mouse support (added later in bpytop) | ✅ |
+| #230 | More themes | ✅ loads all bashtop/bpytop/btop `.theme` files unchanged, the 9 original themes are bundled |
+| #93 | Box with a custom command (tail -f …) | ❌ not implemented |
+| #231 | Output to a spare VT | ❌ not needed: `openvt -s -- rbtop` |
+| #235 | Windows | ❌ (Linux and macOS, see below) |
 
-Nicht betroffen von Original-Bug #234 (Hänger bei `°C` in der sensors-Ausgabe), weil
-rbtop die hwmon-Werte direkt aus `/sys` liest statt `sensors` zu parsen.
+Not affected by original bug #234 (hang on `°C` in the sensors output), because rbtop
+reads the hwmon values directly from `/sys` instead of parsing `sensors`.
 
-## Build & Installation
+## Build & installation
 
-Linux oder macOS, Rust ≥ 1.77:
+Linux or macOS, Rust ≥ 1.77:
 
 ```sh
 cargo build --release          # → target/release/rbtop
 sudo make install              # /usr/local/bin/rbtop + /usr/local/share/rbtop/themes
 ```
 
-Fertige Binaries baut die GitHub-Action bei jedem Tag `v*` und hängt sie an das Release:
+The GitHub Action builds ready-made binaries for every `v*` tag and attaches them to the
+release:
 
-- Linux: x86_64 und aarch64, jeweils glibc und statisch mit musl
-- macOS: `aarch64-apple-darwin` (Apple Silicon), `x86_64-apple-darwin` (Intel) und
-  `universal-apple-darwin` (beides in einer Datei)
+- Linux: x86_64 and aarch64, each with glibc and statically linked with musl
+- macOS: `aarch64-apple-darwin` (Apple Silicon), `x86_64-apple-darwin` (Intel) and
+  `universal-apple-darwin` (both in one file)
 
 ## macOS
 
-Seit 0.2.0 läuft rbtop auch auf macOS, seit 0.3.0 mit Temperaturen, Disk-I/O, GPU und Akku, mit derselben Oberfläche, denselben Tasten und
-derselben Config. Die Daten kommen aus den nativen Schnittstellen statt aus `/proc`:
+Since 0.2.0 rbtop also runs on macOS, since 0.3.0 with temperatures, disk I/O, GPU and
+battery, with the same interface, the same keys and the same config. The data comes
+from the native interfaces instead of `/proc`:
 
-| Bereich | Quelle unter macOS |
+| Area | Source on macOS |
 |---|---|
-| CPU pro Kern, Load | Mach `host_processor_info`, `getloadavg` |
-| Speicher, Swap | `host_statistics64` (Werte wie in der Aktivitätsanzeige), `vm.swapusage` |
-| Prozesse | `libproc` (`proc_pidinfo`), Kommandozeile über `sysctl KERN_PROCARGS2` |
-| Prozess-I/O (Detailansicht) | `proc_pid_rusage` |
-| Netzwerk | `sysctl NET_RT_IFLIST2` (64-Bit-Zähler) |
-| Disks | `getmntinfo`: `/` als `root` und externe Volumes (das Data-Volume teilt sich bei APFS den Container mit `/` und würde nur dieselben Zahlen wiederholen) |
-| Disk-I/O | IOKit `IOBlockStorageDriver`-Statistiken; APFS-Volumes zeigen die Rate ihrer physischen SSD |
-| CPU-/GPU-Temperatur | SMC (`Tp*`/`Te*` bzw. `Tg*` auf Apple Silicon, `TC0P` auf Intel), Fallback IOHID-Sensoren |
-| GPU-Last | IOKit `IOAccelerator` „PerformanceStatistics“ |
-| Akku | IOKit `AppleSmartBattery` (nur MacBooks) |
+| CPU per core, load | Mach `host_processor_info`, `getloadavg` |
+| Memory, swap | `host_statistics64` (same definitions as Activity Monitor), `vm.swapusage` |
+| Processes | `libproc` (`proc_pidinfo`), command line via `sysctl KERN_PROCARGS2` |
+| Process I/O (detailed view) | `proc_pid_rusage` |
+| Network | `sysctl NET_RT_IFLIST2` (64-bit counters) |
+| Disks | `getmntinfo`: `/` as `root` plus external volumes (on APFS the Data volume shares its container with `/` and would only repeat the same numbers) |
+| Disk I/O | IOKit `IOBlockStorageDriver` statistics; APFS volumes show the rate of their physical SSD |
+| CPU/GPU temperature | SMC (`Tp*`/`Te*` and `Tg*` on Apple Silicon, `TC0P` on Intel), IOHID sensors as fallback |
+| GPU load | IOKit `IOAccelerator` "PerformanceStatistics" |
+| Battery | IOKit `AppleSmartBattery` (MacBooks only) |
 
-Die CPU-Temperatur ist der Mittelwert aller CPU-Sensoren, Werte pro Kern gibt es auf
-dem Mac nicht. Bei Apple Silicon entfällt die VRAM-Angabe, weil GPU und CPU sich den
-Speicher teilen. Container gibt es unter macOS nicht.
+The CPU temperature is the average of the CPU sensors; per-core values don't exist on
+the Mac. On Apple Silicon there is no VRAM figure, because GPU and CPU share memory.
+Containers don't exist on macOS.
 
-Hinweise:
+Notes:
 
-- **`sudo rbtop`** zeigt CPU, Speicher und Threads aller Prozesse. Ohne root liefert macOS
-  für Prozesse anderer Benutzer nur Name, Benutzer, Status und Startzeit; dort stehen
-  CPU und Speicher dann auf 0.
-- Das **Netzwerkgerät** beim Start ist das mit dem meisten Traffic (meist `en0`);
-  wechseln wie gewohnt mit `b`/`n` oder fest über `net_device`.
-- **Terminal:** rbtop nutzt 24-Bit-Farben. Mit iTerm2, Ghostty, WezTerm oder kitty
-  passt alles. Wenn die Farben im Terminal.app von macOS falsch aussehen, liegt das
-  an fehlender Truecolor-Unterstützung der installierten Version.
-- Per **Browser** geladene Binaries markiert macOS als „aus dem Internet“; dann einmal
-  `xattr -d com.apple.quarantine rbtop`. Mit `curl` geladene sind nicht betroffen.
+- **`sudo rbtop`** shows CPU, memory and threads of all processes. Without root, macOS
+  only reports name, user, state and start time for other users' processes; CPU and
+  memory are 0 there.
+- The **network device** at start is the one with the most traffic (usually `en0`);
+  switch with `b`/`n` as usual or set it permanently with `net_device`.
+- **Terminal:** rbtop uses 24-bit colour. With iTerm2, Ghostty, WezTerm or kitty
+  everything is fine. If the colours look wrong in macOS Terminal.app, the installed
+  version lacks truecolor support.
+- Binaries downloaded with a **browser** are marked as "from the internet" by macOS; run
+  `xattr -d com.apple.quarantine rbtop` once. Files downloaded with `curl` are not
+  affected.
 
-## Konfiguration
+## Configuration
 
-`~/.config/rbtop/rbtop.cfg`, Format wie bashtop (`key="value"`). Gibt es noch keine,
-wird eine vorhandene `~/.config/bashtop/bashtop.cfg` übernommen. Alles ist auch im
-Optionsmenü (`o`) änderbar und wird beim Schließen gespeichert.
+`~/.config/rbtop/rbtop.cfg`, same format as bashtop (`key="value"`). If it doesn't exist
+yet, an existing `~/.config/bashtop/bashtop.cfg` is used. Everything can also be changed
+in the options menu (`o`) and is saved when it is closed.
 
-Original-Optionen: `color_theme`, `update_ms`, `proc_sorting`, `proc_reversed`,
+Original options: `color_theme`, `update_ms`, `proc_sorting`, `proc_reversed`,
 `proc_tree`, `check_temp`, `draw_clock`, `background_update`, `custom_cpu_name`,
-`proc_gradient`, `proc_per_core`, `disks_filter` (zusätzlich mit `exclude=`-Präfix),
-`hires_graphs`.
+`proc_gradient`, `proc_per_core`, `disks_filter` (additionally with an `exclude=`
+prefix), `hires_graphs`.
 
-Neu: `mem_graphs`, `show_swap`, `show_battery`, `show_gpu`, `show_containers`,
+New: `mem_graphs`, `show_swap`, `show_battery`, `show_gpu`, `show_containers`,
 `net_device`, `mouse`.
 
-Themes werden gesucht in `~/.config/rbtop/themes`, den Theme-Ordnern von
+Themes are looked up in `~/.config/rbtop/themes`, the theme folders of
 bashtop/bpytop/btop, `/usr/{local/,}share/{rbtop,bashtop,bpytop,btop}/themes`,
-`/opt/homebrew/share/{rbtop,bpytop,btop}/themes` und `themes/` neben der Binary.
+`/opt/homebrew/share/{rbtop,bpytop,btop}/themes` and `themes/` next to the binary.
 
-## Getestet / nicht getestet
+## Tested / not tested
 
-Getestet in einem echten PTY: alle Tasten, Maus, Resize, 80×24 und die
-„Terminal size too small“-Meldung, Layout mit 2–128 Threads, Filter, Baum,
-Detailansicht, Signale inkl. Stop/Continue, Optionen, Themes, Config-Speicherung.
-Unit-Tests für Tastatur-Parser, cgroup→Container-Erkennung, Theme-Parser,
-Disk-Namen, CPU-Modellnamen und den macOS-Kommandozeilen-Parser.
+Tested in a real PTY: all keys, mouse, resize, 80×24 and the "Terminal size too small"
+message, layout with 2–128 threads, filter, tree, detailed view, signals including
+stop/continue, options, themes, saving the config. Unit tests for the key parser,
+cgroup → container detection, theme parser, disk names, CPU model names, the macOS
+command line, splitting program and arguments, and SMC decoding.
 
-**macOS:** CPU, Speicher, Prozesse, Netz und Disks wurden auf einem Mac mini M4
-geprüft. Die IOKit-Teile (Temperaturen, Disk-I/O, GPU, Akku) sind gegen die echten
-Bindings kompiliert, die SMC-Struktur per Compile-Time-Assertion auf 80 Byte geprüft
-und die SMC-Dekodierung per Unit-Test abgedeckt; welche Sensoren ein bestimmtes
-Mac-Modell liefert, zeigt aber erst der Lauf auf dem Gerät. Abweichungen bitte als
-Issue melden.
+Checked on real systems:
 
-Mangels Hardware in der Build-Umgebung **nicht live getestet**: GPU-Anzeige, Akku,
-Temperatursensoren und die Docker/Proxmox-Namensauflösung (der cgroup-Parser ist
-per Unit-Test abgedeckt, die Namen kommen aus `/var/lib/docker/containers/*/config.v2.json`
-bzw. `/etc/pve/{lxc,qemu-server}/*.conf` und brauchen root).
+- **Linux:** Debian 12 VM on Proxmox with ~1150 processes and Docker; container names
+  (`docker:arr_sonarr`) are resolved correctly.
+- **macOS:** Mac mini M4: CPU, memory, processes, network, disks, disk I/O, CPU
+  temperature (SMC), GPU load and temperature. That a desktop Mac shows no battery is
+  checked too.
 
-## Lizenz
+**Not yet tested on real hardware:** Linux temperature sensors and GPU (AMD via sysfs,
+NVIDIA via `nvidia-smi`), the battery display on laptops (Linux and MacBook), Intel Macs
+and the Proxmox name resolution for CTs and VMs (the cgroup parser is covered by unit
+tests; the names come from `/etc/pve/{lxc,qemu-server}/*.conf` and need root). Please
+report deviations as an issue.
 
-Apache-2.0 wie das Original. Themes aus dem bashtop-Repository.
+## License
+
+Apache-2.0 like the original. Themes from the bashtop repository.
