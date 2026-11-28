@@ -21,14 +21,56 @@ externen Programme pro Tick.
 
 ## Speed
 
-Gemessen in einer 2-Kern-VM, 160×45-Terminal, gleiche Bedingungen, CPU-Zeit inkl. Kindprozesse:
+Benchmark vom 28.11.2026: rbtop 0.3.1 gegen bashtop 0.9.25, beide bashtop-Modi
+(psutil = Standard, wenn psutil installiert ist; reines Bash). Gleiche Bedingungen
+für alle: Linux-VM mit 2 vCPUs (x86_64), Terminal 160×45, Takt 2500 ms, je zwei
+Läufe à 60 s nach 6 s Einschwingzeit.
 
-| Szenario | bashtop 0.9.25 | rbtop |
-|---|---|---|
-| ~70 Prozesse, 2500 ms Takt | 6,07 % eines Kerns | **0,05 %** |
-| 1068 Prozesse, 2500 ms Takt | – | 0,37 % |
-| 1068 Prozesse, 100 ms Takt | – | 7,8 % (≈ Kernel-Untergrenze für 1068× `/proc/<pid>/stat`) |
-| Terminal-Ausgabe (70 Proz., 2500 ms) | 3,7 KiB/s | 0,5–0,7 KiB/s |
+**~70 Prozesse (normaler Server-Leerlauf):**
+
+| | rbtop | bashtop Bash | bashtop psutil |
+|---|---|---|---|
+| CPU (% eines Kerns) | **0,07 %** | 7,8 % (×117) | 9,4 % (×140) |
+| Speicher (RSS) | **3,5 MiB** | 16,8 MiB (×5) | 34,2 MiB (×10) |
+| Start bis erstes Bild | **0,11 s** | 1,24 s | 1,50 s |
+| Reaktion auf Taste (Median / max) | **0,5 / 1,2 ms** | 56 / 76 ms | 48 / 77 ms |
+| Gestartete Hilfsprozesse | **0/s** | 24/s | 22/s |
+| Terminal-Ausgabe | **0,6 KiB/s** | 3,6 KiB/s | 4,1 KiB/s |
+
+**~1070 Prozesse:**
+
+| | rbtop | bashtop Bash | bashtop psutil |
+|---|---|---|---|
+| CPU (% eines Kerns) | **0,33 %** | 8,1 % (×25) | 15,7 % (×48) |
+| Speicher (RSS) | **3,6 MiB** | 17,5 MiB | 37,0 MiB |
+| Start bis erstes Bild | **0,27 s** | 1,17 s | 1,86 s |
+| Reaktion auf Taste (Median / max) | **0,6 / 3,4 ms** | 38 / 135 ms | 38 / 274 ms |
+
+Gemessen wurde:
+
+- **CPU:** User- plus System-Zeit des ganzen Prozessbaums, einschließlich der
+  kurzlebigen Hilfsprozesse, die bashtop startet (`ps`, `awk`, `grep` usw.).
+- **Speicher:** mittlerer RSS-Wert des Prozessbaums über die Messdauer.
+- **Hilfsprozesse:** neue Prozesse pro Sekunde laut `/proc/stat`. Der Leerlauf des
+  Systems lag bei 0,08/s, rbtops gemessene 0,06/s sind also Rauschen.
+- **Reaktion auf Taste:** Zeit vom Druck auf Pfeil runter bis zum ersten neu
+  gezeichneten Byte, Median und Maximum aus 15 Tastendrücken.
+- **Startzeit:** vom Programmstart bis zum ersten vollständigen Bild. Bei rbtop sind
+  darin absichtlich 100 ms für die erste CPU-Messung enthalten.
+
+Unter Last holt bashtops Bash-Modus auf, weil er pro Tick einmal das in C geschriebene
+`ps` aufruft. Bei rbtop steigen die Kosten mit jedem Prozess, weil der Kernel jede
+`/proc/<pid>/stat`-Datei einzeln erzeugen muss. Der psutil-Modus wird bei vielen
+Prozessen am langsamsten, weil er alle Prozesse in Python durchläuft.
+
+Die Messung lässt sich mit [`bench/bench.py`](bench/bench.py) wiederholen; die
+Rohdaten liegen in [`bench/results-2026-11-28.jsonl`](bench/results-2026-11-28.jsonl).
+
+```sh
+python3 bench/bench.py rbtop 60 -- ./target/release/rbtop
+python3 bench/bench.py bashtop 60 -- bash /pfad/zu/bashtop
+python3 bench/spawn_load.py 1000    # 1000 Last-Prozesse (sleep 3600)
+```
 
 Warum es so schnell ist:
 
