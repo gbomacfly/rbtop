@@ -1,5 +1,9 @@
 # rbtop – bashtop in Rust
 
+[![CI](https://github.com/gbomacfly/rbtop/actions/workflows/ci.yml/badge.svg)](https://github.com/gbomacfly/rbtop/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/rbtop.svg)](https://crates.io/crates/rbtop)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 **English** · [Deutsch](README.de.md)
 
 A rewrite of [bashtop](https://github.com/aristocratos/bashtop) (aristocratos) in Rust:
@@ -19,6 +23,47 @@ issues.
 
 Dependencies: only the `libc` crate. No TUI framework, no psutil, no external programs
 per tick.
+
+## Installation
+
+**Homebrew** (macOS and Linux, prebuilt):
+
+```sh
+brew install gbomacfly/tap/rbtop
+brew upgrade rbtop                # later updates
+```
+
+**Debian, Ubuntu, Proxmox VE** (`.deb` with the static build, amd64 and arm64):
+
+```sh
+v=$(curl -fsSLo /dev/null -w '%{url_effective}' https://github.com/gbomacfly/rbtop/releases/latest); v=${v##*/v}
+arch=$(dpkg --print-architecture)
+curl -fsSLO https://github.com/gbomacfly/rbtop/releases/download/v$v/rbtop_${v}-1_${arch}.deb
+sudo apt install ./rbtop_${v}-1_${arch}.deb
+```
+
+The first line looks up the latest version. The package installs `/usr/bin/rbtop` and the
+themes to `/usr/share/rbtop/themes`; it has no dependencies, so it also works on older
+releases.
+
+**Cargo:**
+
+```sh
+cargo binstall rbtop              # prebuilt binary, needs cargo-binstall
+cargo install --locked rbtop      # build from source, Rust ≥ 1.77
+```
+
+**Release archives** for every `v*` tag on the [releases page](https://github.com/gbomacfly/rbtop/releases):
+
+- Linux: x86_64 and aarch64, each with glibc and statically linked with musl
+- macOS: `aarch64-apple-darwin` (Apple Silicon), `x86_64-apple-darwin` (Intel) and
+  `universal-apple-darwin` (both in one file)
+
+Every archive and `.deb` comes with a `.sha256` file to check the download, e.g.:
+
+```sh
+shasum -a 256 -c rbtop-v0.3.4-x86_64-unknown-linux-musl.tar.gz.sha256
+```
 
 ## Speed
 
@@ -153,19 +198,6 @@ all of its descendants (requested in #185, e.g. to pause Blender render jobs).
 Not affected by original bug #234 (hang on `°C` in the sensors output), because rbtop
 reads the hwmon values directly from `/sys` instead of parsing `sensors`.
 
-## Installation
-
-| | |
-|---|---|
-| **Homebrew** (macOS, Linux) | `brew install gbomacfly/tap/rbtop` |
-| **Debian, Ubuntu, Proxmox** | `.deb` from the [releases page](https://github.com/gbomacfly/rbtop/releases), then `sudo apt install ./rbtop_<version>-1_amd64.deb` (`arm64` for ARM) |
-| **Cargo, prebuilt** | `cargo binstall rbtop` (needs [cargo-binstall](https://github.com/cargo-bins/cargo-binstall)) |
-| **Cargo, from source** | `cargo install rbtop` |
-| **Tarball** | from the [releases page](https://github.com/gbomacfly/rbtop/releases), see below |
-
-The `.deb` packages contain the static musl build and run on any Debian-based
-distribution; they install the themes to `/usr/share/rbtop/themes`.
-
 ## Build from source
 
 Linux or macOS, Rust ≥ 1.77:
@@ -175,18 +207,8 @@ cargo build --release          # → target/release/rbtop
 sudo make install              # /usr/local/bin/rbtop + /usr/local/share/rbtop/themes
 ```
 
-The GitHub Action builds ready-made binaries for every `v*` tag and attaches them to the
-release:
-
-- Linux: x86_64 and aarch64, each with glibc and statically linked with musl
-- macOS: `aarch64-apple-darwin` (Apple Silicon), `x86_64-apple-darwin` (Intel) and
-  `universal-apple-darwin` (both in one file)
-
-Every archive comes with a `.sha256` file to check the download:
-
-```sh
-shasum -a 256 -c rbtop-v0.3.3-x86_64-unknown-linux-musl.tar.gz.sha256
-```
+`make install PREFIX=…` works with any prefix; rbtop finds its themes in
+`<prefix>/share/rbtop/themes`.
 
 ## macOS
 
@@ -222,8 +244,8 @@ Notes:
   everything is fine. If the colours look wrong in macOS Terminal.app, the installed
   version lacks truecolor support.
 - Binaries downloaded with a **browser** are marked as "from the internet" by macOS; run
-  `xattr -d com.apple.quarantine rbtop` once. Files downloaded with `curl` are not
-  affected.
+  `xattr -d com.apple.quarantine rbtop` once. Files downloaded with `curl` and the
+  Homebrew install are not affected.
 
 ## Configuration
 
@@ -241,15 +263,19 @@ New: `mem_graphs`, `show_swap`, `show_battery`, `show_gpu`, `show_containers`,
 
 Themes are looked up in `~/.config/rbtop/themes`, the theme folders of
 bashtop/bpytop/btop, `/usr/{local/,}share/{rbtop,bashtop,bpytop,btop}/themes`,
-`/opt/homebrew/share/{rbtop,bpytop,btop}/themes` and `themes/` next to the binary.
+`/opt/homebrew/share/{rbtop,bpytop,btop}/themes`, `themes/` next to the binary and
+`<prefix>/share/rbtop/themes` for `<prefix>/bin/rbtop` (Homebrew, `.deb`, `make install`).
 
 ## Tested / not tested
 
 Tested in a real PTY: all keys, mouse, resize, 80×24 and the "Terminal size too small"
 message, layout with 2–128 threads, filter, tree, detailed view, signals including
-stop/continue, options, themes, saving the config. Unit tests for the key parser,
-cgroup → container detection, theme parser, disk names, CPU model names, the macOS
-command line, splitting program and arguments, and SMC decoding.
+stop/continue, options, themes, saving the config. Unit tests for the key parser
+(including sequences split across reads), cgroup → container detection, theme parser,
+disk names and mount filter, CPU model names, the macOS command line, splitting program
+and arguments, cleaning names for display, the protection of pid 0/1, process start
+times, the config round trip and SMC decoding. A full code audit (0.3.2/0.3.3) added
+fuzzing of all parsers and randomized stress tests of the UI.
 
 Checked on real systems:
 
@@ -258,6 +284,8 @@ Checked on real systems:
 - **macOS:** Mac mini M4: CPU, memory, processes, network, disks, disk I/O, CPU
   temperature (SMC), GPU load and temperature. That a desktop Mac shows no battery is
   checked too.
+- **Packages:** `brew install gbomacfly/tap/rbtop` on the Mac mini M4; the `.deb` for
+  amd64 (installed and removed on Debian) and arm64 (on aarch64 Linux).
 
 **Not yet tested on real hardware:** Linux temperature sensors and GPU (AMD via sysfs,
 NVIDIA via `nvidia-smi`), the battery display on laptops (Linux and MacBook), Intel Macs

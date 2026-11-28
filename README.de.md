@@ -1,5 +1,9 @@
 # rbtop – bashtop in Rust
 
+[![CI](https://github.com/gbomacfly/rbtop/actions/workflows/ci.yml/badge.svg)](https://github.com/gbomacfly/rbtop/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/rbtop.svg)](https://crates.io/crates/rbtop)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 [English](README.md) · **Deutsch**
 
 Ein Nachbau von [bashtop](https://github.com/aristocratos/bashtop) (aristocratos) in Rust:
@@ -20,6 +24,48 @@ des Originals.
 
 Abhängigkeiten: nur das `libc`-Crate. Kein TUI-Framework, kein psutil, keine
 externen Programme pro Tick.
+
+## Installation
+
+**Homebrew** (macOS und Linux, fertig gebaut):
+
+```sh
+brew install gbomacfly/tap/rbtop
+brew upgrade rbtop                # spätere Updates
+```
+
+**Debian, Ubuntu, Proxmox VE** (`.deb` mit dem statischen Build, amd64 und arm64):
+
+```sh
+v=$(curl -fsSLo /dev/null -w '%{url_effective}' https://github.com/gbomacfly/rbtop/releases/latest); v=${v##*/v}
+arch=$(dpkg --print-architecture)
+curl -fsSLO https://github.com/gbomacfly/rbtop/releases/download/v$v/rbtop_${v}-1_${arch}.deb
+sudo apt install ./rbtop_${v}-1_${arch}.deb
+```
+
+Die erste Zeile ermittelt die neueste Version. Das Paket installiert `/usr/bin/rbtop` und
+die Themes nach `/usr/share/rbtop/themes`; es hat keine Abhängigkeiten und läuft deshalb
+auch auf älteren Releases.
+
+**Cargo:**
+
+```sh
+cargo binstall rbtop              # fertiges Binary, braucht cargo-binstall
+cargo install --locked rbtop      # aus dem Quellcode, Rust ≥ 1.77
+```
+
+**Release-Archive** zu jedem Tag `v*` auf der [Release-Seite](https://github.com/gbomacfly/rbtop/releases):
+
+- Linux: x86_64 und aarch64, jeweils glibc und statisch mit musl
+- macOS: `aarch64-apple-darwin` (Apple Silicon), `x86_64-apple-darwin` (Intel) und
+  `universal-apple-darwin` (beides in einer Datei)
+
+Zu jedem Archiv und `.deb` gibt es eine `.sha256`-Datei, damit lässt sich der Download
+prüfen, z. B.:
+
+```sh
+shasum -a 256 -c rbtop-v0.3.4-x86_64-unknown-linux-musl.tar.gz.sha256
+```
 
 ## Speed
 
@@ -154,19 +200,6 @@ alle seine Nachfahren (Wunsch aus #185, z. B. Blender-Renderjobs pausieren).
 Nicht betroffen von Original-Bug #234 (Hänger bei `°C` in der sensors-Ausgabe), weil
 rbtop die hwmon-Werte direkt aus `/sys` liest statt `sensors` zu parsen.
 
-## Installation
-
-| | |
-|---|---|
-| **Homebrew** (macOS, Linux) | `brew install gbomacfly/tap/rbtop` |
-| **Debian, Ubuntu, Proxmox** | `.deb` von der [Release-Seite](https://github.com/gbomacfly/rbtop/releases), dann `sudo apt install ./rbtop_<version>-1_amd64.deb` (`arm64` für ARM) |
-| **Cargo, fertig gebaut** | `cargo binstall rbtop` (braucht [cargo-binstall](https://github.com/cargo-bins/cargo-binstall)) |
-| **Cargo, aus dem Quellcode** | `cargo install rbtop` |
-| **Tarball** | von der [Release-Seite](https://github.com/gbomacfly/rbtop/releases), siehe unten |
-
-Die `.deb`-Pakete enthalten den statischen musl-Build und laufen auf jeder
-Debian-basierten Distribution; die Themes landen in `/usr/share/rbtop/themes`.
-
 ## Selbst bauen
 
 Linux oder macOS, Rust ≥ 1.77:
@@ -176,17 +209,8 @@ cargo build --release          # → target/release/rbtop
 sudo make install              # /usr/local/bin/rbtop + /usr/local/share/rbtop/themes
 ```
 
-Fertige Binaries baut die GitHub-Action bei jedem Tag `v*` und hängt sie an das Release:
-
-- Linux: x86_64 und aarch64, jeweils glibc und statisch mit musl
-- macOS: `aarch64-apple-darwin` (Apple Silicon), `x86_64-apple-darwin` (Intel) und
-  `universal-apple-darwin` (beides in einer Datei)
-
-Zu jedem Archiv gibt es eine `.sha256`-Datei, damit lässt sich der Download prüfen:
-
-```sh
-shasum -a 256 -c rbtop-v0.3.3-x86_64-unknown-linux-musl.tar.gz.sha256
-```
+`make install PREFIX=…` funktioniert mit jedem Prefix; rbtop findet seine Themes dann in
+`<prefix>/share/rbtop/themes`.
 
 ## macOS
 
@@ -221,7 +245,8 @@ Hinweise:
   passt alles. Wenn die Farben im Terminal.app von macOS falsch aussehen, liegt das
   an fehlender Truecolor-Unterstützung der installierten Version.
 - Per **Browser** geladene Binaries markiert macOS als „aus dem Internet“; dann einmal
-  `xattr -d com.apple.quarantine rbtop`. Mit `curl` geladene sind nicht betroffen.
+  `xattr -d com.apple.quarantine rbtop`. Mit `curl` geladene und die Homebrew-Installation
+  sind nicht betroffen.
 
 ## Konfiguration
 
@@ -239,16 +264,21 @@ Neu: `mem_graphs`, `show_swap`, `show_battery`, `show_gpu`, `show_containers`,
 
 Themes werden gesucht in `~/.config/rbtop/themes`, den Theme-Ordnern von
 bashtop/bpytop/btop, `/usr/{local/,}share/{rbtop,bashtop,bpytop,btop}/themes`,
-`/opt/homebrew/share/{rbtop,bpytop,btop}/themes` und `themes/` neben der Binary.
+`/opt/homebrew/share/{rbtop,bpytop,btop}/themes`, `themes/` neben der Binary und
+`<prefix>/share/rbtop/themes` für `<prefix>/bin/rbtop` (Homebrew, `.deb`, `make install`).
 
 ## Getestet / nicht getestet
 
 Getestet in einem echten PTY: alle Tasten, Maus, Resize, 80×24 und die
 „Terminal size too small“-Meldung, Layout mit 2–128 Threads, Filter, Baum,
 Detailansicht, Signale inkl. Stop/Continue, Optionen, Themes, Config-Speicherung.
-Unit-Tests für Tastatur-Parser, cgroup→Container-Erkennung, Theme-Parser,
-Disk-Namen, CPU-Modellnamen, die macOS-Kommandozeilen, die Trennung von Programm
-und Argumenten sowie die SMC-Dekodierung.
+Unit-Tests für Tastatur-Parser (auch über mehrere Lesevorgänge zerteilte Sequenzen),
+cgroup→Container-Erkennung, Theme-Parser, Disk-Namen und Mount-Filter,
+CPU-Modellnamen, die macOS-Kommandozeilen, die Trennung von Programm und Argumenten,
+die Bereinigung von Namen für die Anzeige, den Schutz von PID 0/1, Prozess-Startzeiten,
+das Speichern und Laden der Config sowie die SMC-Dekodierung. Ein komplettes Code-Audit
+(0.3.2/0.3.3) hat zusätzlich alle Parser gefuzzt und die Oberfläche mit zufälligen
+Eingaben einem Stresstest unterzogen.
 
 Auf echten Systemen geprüft:
 
@@ -257,6 +287,8 @@ Auf echten Systemen geprüft:
 - **macOS:** Mac mini M4: CPU, Speicher, Prozesse, Netz, Disks, Disk-I/O,
   CPU-Temperatur (SMC), GPU-Last und -Temperatur. Dass ein Desktop-Mac keinen Akku
   anzeigt, ist ebenfalls geprüft.
+- **Pakete:** `brew install gbomacfly/tap/rbtop` auf dem Mac mini M4; das `.deb` für
+  amd64 (unter Debian installiert und wieder entfernt) und arm64 (auf aarch64-Linux).
 
 **Noch nicht auf echter Hardware getestet:** Linux-Temperatursensoren und GPU (AMD
 über sysfs, NVIDIA über `nvidia-smi`), die Akku-Anzeige auf Laptops (Linux und MacBook),
