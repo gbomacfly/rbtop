@@ -154,7 +154,20 @@ alle seine Nachfahren (Wunsch aus #185, z. B. Blender-Renderjobs pausieren).
 Nicht betroffen von Original-Bug #234 (Hänger bei `°C` in der sensors-Ausgabe), weil
 rbtop die hwmon-Werte direkt aus `/sys` liest statt `sensors` zu parsen.
 
-## Build & Installation
+## Installation
+
+| | |
+|---|---|
+| **Homebrew** (macOS, Linux) | `brew install gbomacfly/tap/rbtop` |
+| **Debian, Ubuntu, Proxmox** | `.deb` von der [Release-Seite](https://github.com/gbomacfly/rbtop/releases), dann `sudo apt install ./rbtop_<version>-1_amd64.deb` (`arm64` für ARM) |
+| **Cargo, fertig gebaut** | `cargo binstall rbtop` (braucht [cargo-binstall](https://github.com/cargo-bins/cargo-binstall)) |
+| **Cargo, aus dem Quellcode** | `cargo install rbtop` |
+| **Tarball** | von der [Release-Seite](https://github.com/gbomacfly/rbtop/releases), siehe unten |
+
+Die `.deb`-Pakete enthalten den statischen musl-Build und laufen auf jeder
+Debian-basierten Distribution; die Themes landen in `/usr/share/rbtop/themes`.
+
+## Selbst bauen
 
 Linux oder macOS, Rust ≥ 1.77:
 

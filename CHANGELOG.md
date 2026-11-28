@@ -3,7 +3,18 @@
 All notable changes to rbtop. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.4] - 2026-11-28
+
+Packaging: Homebrew, Debian packages and crates.io.
+
+### Added
+- Homebrew tap: `brew install gbomacfly/tap/rbtop` (prebuilt binaries for macOS
+  and Linux, the release CI updates the formula for every tag).
+- `.deb` packages for amd64 and arm64 (static musl build) on every release.
+- crates.io: `cargo install rbtop`, and `cargo binstall rbtop` for the prebuilt
+  release binaries.
+- Themes are also found in `<prefix>/share/rbtop/themes` next to the binary's
+  `bin/` directory (Homebrew Cellar, Linuxbrew, any `make install` PREFIX).
 
 ### Fixed
 - Typing into the process filter puts the selection on the first row of the
@@ -143,7 +154,7 @@ Security and robustness fixes from a full code audit.
   config and theme format, plus the feasible feature requests from the bashtop
   issue tracker (#17, #26/#221, #48, #63, #73, #97, #119, #185, #199).
 
-[Unreleased]: https://github.com/gbomacfly/rbtop/compare/v0.3.3...HEAD
+[0.3.4]: https://github.com/gbomacfly/rbtop/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/gbomacfly/rbtop/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/gbomacfly/rbtop/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/gbomacfly/rbtop/compare/v0.3.0...v0.3.1

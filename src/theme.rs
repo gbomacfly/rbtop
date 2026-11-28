@@ -131,10 +131,15 @@ pub fn theme_dirs() -> Vec<PathBuf> {
         "/opt/homebrew/share/rbtop/themes", "/opt/homebrew/share/bpytop/themes", "/opt/homebrew/share/btop/themes"] {
         v.push(PathBuf::from(p));
     }
-    // themes/ next to the binary (portable install)
+    // themes/ next to the binary (portable install), and <prefix>/share/rbtop/themes
+    // for <prefix>/bin/rbtop: Homebrew's Cellar and Linuxbrew, .deb, make install
+    // with any PREFIX (current_exe resolves the bin/ symlink)
     if let Ok(exe) = std::env::current_exe() {
         if let Some(d) = exe.parent() {
             v.push(d.join("themes"));
+            if let Some(prefix) = d.parent() {
+                v.push(prefix.join("share/rbtop/themes"));
+            }
         }
     }
     v

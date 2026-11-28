@@ -61,6 +61,13 @@ jobs:
           tar czf rbtop-${{ github.ref_name }}-${{ matrix.target }}.tar.gz -C dist .
           f=rbtop-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
           shasum -a 256 "$f" > "$f.sha256"
+      - name: .deb package (static musl builds only)
+        if: contains(matrix.target, 'musl')
+        run: |
+          cargo install cargo-deb --locked --version 3.8.0
+          # binary is already stripped (release profile); host strip can't do aarch64
+          cargo deb --no-build --no-strip --target ${{ matrix.target }} --output .
+          for f in rbtop_*.deb; do shasum -a 256 "$f" > "$f.sha256"; done
       - name: release notes from CHANGELOG.md
         run: |
           v="${GITHUB_REF_NAME#v}"
@@ -71,6 +78,8 @@ jobs:
           files: |
             rbtop-*.tar.gz
             rbtop-*.tar.gz.sha256
+            rbtop_*.deb
+            rbtop_*.deb.sha256
           body_path: notes.md
 
   release-macos:
@@ -111,3 +120,54 @@ jobs:
             rbtop-*.tar.gz
             rbtop-*.tar.gz.sha256
           body_path: notes.md
+
+  # Homebrew tap: writes Formula/rbtop.rb in gbomacfly/homebrew-tap.
+  # Needs the repository secret TAP_TOKEN (fine-grained token, "Contents:
+  # read and write" on gbomacfly/homebrew-tap only); skipped without it.
+  homebrew-tap:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [release-linux, release-macos]
+    runs-on: ubuntu-latest
+    env:
+      TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: update formula
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then echo "TAP_TOKEN not set, skipping"; exit 0; fi
+          v="${GITHUB_REF_NAME#v}"
+          mkdir sums
+          gh release download "$GITHUB_REF_NAME" --pattern '*.tar.gz.sha256' --dir sums
+          sh packaging/homebrew/formula.sh "$v" sums > rbtop.rb
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/gbomacfly/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          cp rbtop.rb tap/Formula/rbtop.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/rbtop.rb
+          git diff --cached --quiet && { echo "formula unchanged"; exit 0; }
+          git commit -m "rbtop $v"
+          git push
+
+  # crates.io: cargo install rbtop / cargo binstall rbtop.
+  # Needs the repository secret CARGO_REGISTRY_TOKEN (crates.io API token,
+  # scope publish-update for rbtop); skipped without it.
+  crates-io:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [release-linux, release-macos]
+    runs-on: ubuntu-latest
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable branch
+        with:
+          toolchain: stable
+      - name: publish
+        run: |
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then echo "CARGO_REGISTRY_TOKEN not set, skipping"; exit 0; fi
+          v=$(cargo pkgid | sed 's/.*[#@]//')
+          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "Cargo.toml version $v does not match tag $GITHUB_REF_NAME"; exit 1; }
+          cargo publish --locked
