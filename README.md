@@ -246,6 +246,10 @@ and the Proxmox name resolution for CTs and VMs (the cgroup parser is covered by
 tests; the names come from `/etc/pve/{lxc,qemu-server}/*.conf` and need root). Please
 report deviations as an issue.
 
+## Changelog
+
+What changed in which version: [CHANGELOG.md](CHANGELOG.md) (also shown as release notes on the [releases page](https://github.com/gbomacfly/rbtop/releases)).
+
 ## License
 
 Apache-2.0 like the original. Themes from the bashtop repository.

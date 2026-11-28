@@ -245,6 +245,10 @@ Intel-Macs und die Proxmox-Namensauflösung für CTs und VMs (der cgroup-Parser 
 Unit-Test abgedeckt; die Namen kommen aus `/etc/pve/{lxc,qemu-server}/*.conf` und
 brauchen root). Abweichungen bitte als Issue melden.
 
+## Changelog
+
+Was sich in welcher Version geändert hat: [CHANGELOG.md](CHANGELOG.md) (englisch, steht auch als Release-Notes auf der [Release-Seite](https://github.com/gbomacfly/rbtop/releases)).
+
 ## Lizenz
 
 Apache-2.0 wie das Original. Themes aus dem bashtop-Repository.

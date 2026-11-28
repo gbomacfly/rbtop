@@ -37,11 +37,17 @@ jobs:
       - run: |
           mkdir dist
           cp target/${{ matrix.target }}/release/rbtop dist/
-          cp -r themes README.md README.de.md LICENSE dist/
+          cp -r themes README.md README.de.md CHANGELOG.md LICENSE dist/
           tar czf rbtop-${{ github.ref_name }}-${{ matrix.target }}.tar.gz -C dist .
+      - name: release notes from CHANGELOG.md
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          awk -v v="$v" '/^\[[0-9]/ && f { exit } /^## \[/ { if (f) exit; if (index($0, "## [" v "]") == 1) { f = 1; next } } f' CHANGELOG.md > notes.md
+          test -s notes.md || echo "See CHANGELOG.md" > notes.md
       - uses: softprops/action-gh-release@v2
         with:
           files: rbtop-*.tar.gz
+          body_path: notes.md
 
   release-macos:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -59,7 +65,7 @@ jobs:
       - run: |
           for t in aarch64-apple-darwin x86_64-apple-darwin universal-apple-darwin; do
             mkdir -p dist-$t
-            cp -r themes README.md README.de.md LICENSE dist-$t/
+            cp -r themes README.md README.de.md CHANGELOG.md LICENSE dist-$t/
           done
           cp target/aarch64-apple-darwin/release/rbtop dist-aarch64-apple-darwin/
           cp target/x86_64-apple-darwin/release/rbtop dist-x86_64-apple-darwin/
@@ -68,6 +74,12 @@ jobs:
           for t in aarch64-apple-darwin x86_64-apple-darwin universal-apple-darwin; do
             tar czf rbtop-${{ github.ref_name }}-$t.tar.gz -C dist-$t .
           done
+      - name: release notes from CHANGELOG.md
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          awk -v v="$v" '/^\[[0-9]/ && f { exit } /^## \[/ { if (f) exit; if (index($0, "## [" v "]") == 1) { f = 1; next } } f' CHANGELOG.md > notes.md
+          test -s notes.md || echo "See CHANGELOG.md" > notes.md
       - uses: softprops/action-gh-release@v2
         with:
           files: rbtop-*.tar.gz
+          body_path: notes.md
