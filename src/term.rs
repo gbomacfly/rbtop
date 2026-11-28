@@ -185,8 +185,15 @@ fn sgr(out: &mut Vec<u8>, c: Color, fg: bool) {
 #[inline]
 fn sanitize(ch: char) -> char {
     let u = ch as u32;
-    if u < 0x20 || u == 0x7f {
+    // C0, DEL and C1 controls (U+009B is a one-byte CSI on some terminals):
+    // process names and command lines must never reach the terminal as control codes.
+    if u < 0x20 || (0x7f..=0x9f).contains(&u) {
         return ' ';
+    }
+    // Bidi overrides/isolates could make a process name display as something
+    // else ("Trojan Source"); zero-width and combining marks shift the grid.
+    if (0x200b..=0x200f).contains(&u) || (0x202a..=0x202e).contains(&u) || (0x2066..=0x2069).contains(&u) || u == 0xfeff || u == 0x061c {
+        return '?';
     }
     // Replace double-width CJK/emoji so the grid stays aligned.
     if (0x1100..=0x115f).contains(&u) || (0x2e80..=0xa4cf).contains(&u) || (0xac00..=0xd7a3).contains(&u)
@@ -345,27 +352,72 @@ pub fn poll_input(ms: i32) -> bool {
     }
 }
 
-pub fn read_keys(out: &mut Vec<Key>) {
-    let mut buf = [0u8; 1024];
-    let n = unsafe { libc::read(0, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
-    if n <= 0 {
-        return;
-    }
-    parse(&buf[..n as usize], out);
+thread_local! {
+    /// Bytes of an escape sequence or UTF-8 character that was cut off at the
+    /// end of the last read (slow ssh links split "\x1b[A" or mouse reports).
+    static PENDING: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-fn parse(b: &[u8], out: &mut Vec<Key>) {
+/// How long to wait for the rest of a cut-off sequence before a lone Esc
+/// counts as the Esc key (like vim's ttimeoutlen).
+const ESC_TIMEOUT_MS: i32 = 50;
+/// An unterminated sequence longer than this is garbage and gets dropped.
+const MAX_PENDING: usize = 64;
+
+pub fn read_keys(out: &mut Vec<Key>) {
+    PENDING.with(|p| {
+        let mut pend = p.borrow_mut();
+        let mut buf = [0u8; 1024];
+        let n = unsafe { libc::read(0, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+        if n > 0 {
+            pend.extend_from_slice(&buf[..n as usize]);
+        }
+        // wait for the rest of a split sequence: each next byte may take up to
+        // ESC_TIMEOUT_MS, the whole sequence at most 4x that (and MAX_PENDING bytes)
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(4 * ESC_TIMEOUT_MS as u64);
+        loop {
+            let used = parse(&pend, out, false);
+            pend.drain(..used);
+            if pend.is_empty() {
+                return;
+            }
+            if pend.len() > MAX_PENDING || std::time::Instant::now() >= deadline || !poll_input(ESC_TIMEOUT_MS) {
+                break;
+            }
+            let n = unsafe { libc::read(0, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+            if n <= 0 {
+                break;
+            }
+            pend.extend_from_slice(&buf[..n as usize]);
+        }
+        // timed out: whatever is left is final (lone Esc = Esc key)
+        parse(&pend, out, true);
+        pend.clear();
+    })
+}
+
+/// Parse input bytes into keys. Returns how many bytes were consumed: with
+/// `last == false` an incomplete sequence at the end is left unconsumed so the
+/// caller can complete it with the next read; with `last == true` everything
+/// is consumed (a lone Esc becomes Key::Esc, a cut-off sequence is dropped).
+fn parse(b: &[u8], out: &mut Vec<Key>, last: bool) -> usize {
     let mut i = 0;
     while i < b.len() {
         let c = b[i];
         match c {
             0x1b => {
                 if i + 1 >= b.len() {
+                    if !last {
+                        return i;
+                    }
                     out.push(Key::Esc);
                     i += 1;
                     continue;
                 }
                 let n = b[i + 1];
+                if n == b'O' && i + 2 >= b.len() && !last {
+                    return i;
+                }
                 if n == b'O' && i + 2 < b.len() {
                     out.push(match b[i + 2] {
                         b'P' => Key::F(1),
@@ -388,6 +440,9 @@ fn parse(b: &[u8], out: &mut Vec<Key>) {
                         j += 1;
                     }
                     if j >= b.len() {
+                        if !last {
+                            return i;
+                        }
                         i = b.len();
                         continue;
                     }
@@ -469,6 +524,9 @@ fn parse(b: &[u8], out: &mut Vec<Key>) {
             }
             _ => {
                 let len = if c >= 0xf0 { 4 } else if c >= 0xe0 { 3 } else if c >= 0xc0 { 2 } else { 1 };
+                if i + len > b.len() && !last {
+                    return i;
+                }
                 let end = (i + len).min(b.len());
                 if let Ok(s) = std::str::from_utf8(&b[i..end]) {
                     if let Some(ch) = s.chars().next() {
@@ -479,6 +537,7 @@ fn parse(b: &[u8], out: &mut Vec<Key>) {
             }
         }
     }
+    b.len()
 }
 
 #[cfg(test)]
@@ -487,7 +546,36 @@ mod tests {
     #[test]
     fn parse_keys() {
         let mut v = Vec::new();
-        parse(b"\x1b[A\x1b[6~\x1bOPq\x1b[<0;10;5M\x1b[<64;3;3M\x1b", &mut v);
+        parse(b"\x1b[A\x1b[6~\x1bOPq\x1b[<0;10;5M\x1b[<64;3;3M\x1b", &mut v, true);
         assert_eq!(v, vec![Key::Up, Key::PgDn, Key::F(1), Key::Char('q'), Key::MouseDown(9, 4), Key::WheelUp(2, 2), Key::Esc]);
+    }
+    #[test]
+    fn sanitize_controls() {
+        assert_eq!(sanitize('\u{1b}'), ' ');
+        assert_eq!(sanitize('\u{9b}'), ' ');
+        assert_eq!(sanitize('\u{85}'), ' ');
+        assert_eq!(sanitize('\u{202e}'), '?');
+        assert_eq!(sanitize('\u{200b}'), '?');
+        assert_eq!(sanitize('a'), 'a');
+        assert_eq!(sanitize('ä'), 'ä');
+        assert_eq!(sanitize('█'), '█');
+    }
+    #[test]
+    fn split_sequences() {
+        // every split point of an arrow key, a mouse click and a 3-byte char
+        // must give the same keys as the unsplit input
+        let input: &[u8] = "\x1b[A\x1b[<0;10;5M€x\x1bOP".as_bytes();
+        let mut want = Vec::new();
+        parse(input, &mut want, true);
+        assert_eq!(want, vec![Key::Up, Key::MouseDown(9, 4), Key::Char('€'), Key::Char('x'), Key::F(1)]);
+        for cut in 0..=input.len() {
+            let mut got = Vec::new();
+            let mut pend = input[..cut].to_vec();
+            let used = parse(&pend, &mut got, false);
+            pend.drain(..used);
+            pend.extend_from_slice(&input[cut..]);
+            parse(&pend, &mut got, true);
+            assert_eq!(got, want, "split at {cut}");
+        }
     }
 }

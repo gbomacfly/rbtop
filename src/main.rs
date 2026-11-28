@@ -186,12 +186,22 @@ impl App {
 
     fn rebuild_rows(&mut self) {
         if self.rows_dirty {
+            // The selection follows its process, not its row: after re-sorting,
+            // the highlighted (and kill-dialog) target must stay the same pid.
+            let sel_pid = self.sel.and_then(|s| self.procs.rows.get(s)).map(|r| r.pid);
+            let sel_off = self.sel.map(|s| s.saturating_sub(self.start));
             self.procs.build_rows(&self.cfg.proc_sorting, self.cfg.proc_reversed, self.cfg.proc_tree, &self.filter);
             self.rows_dirty = false;
             let n = self.procs.rows.len();
             if let Some(s) = self.sel {
                 if n == 0 {
                     self.sel = None;
+                } else if let Some(i) = sel_pid.and_then(|p| self.procs.rows.iter().position(|r| r.pid == p)) {
+                    self.sel = Some(i);
+                    // keep the selected row at the same screen line if possible
+                    if let Some(off) = sel_off {
+                        self.start = i.saturating_sub(off);
+                    }
                 } else if s >= n {
                     self.sel = Some(n - 1);
                 }
@@ -199,6 +209,7 @@ impl App {
             if self.start + self.page > n {
                 self.start = n.saturating_sub(self.page);
             }
+            self.ensure_visible();
         }
     }
 
@@ -1205,6 +1216,7 @@ impl App {
                     if tree {
                         targets.extend(me.procs.descendants(pid));
                     }
+                    targets.retain(|&t| procs::signal_allowed(t));
                     let mut ok = 0;
                     let mut err = None;
                     for t in &targets {
@@ -1345,7 +1357,8 @@ impl App {
                 if stopped { (libc::SIGCONT, "continue", "SIGCONT - 18") } else { (libc::SIGSTOP, "stop", "SIGSTOP - 19") }
             }
         };
-        self.mode = Mode::Signal { sig, verb, signame, pid, name, sel: 0, result: None };
+        let result = (!procs::signal_allowed(pid)).then(|| vec![format!("Not sending {signame} to pid {pid}!"), "pid 0 and 1 (kernel, init/launchd) are".into(), "protected: that would stop the system".into()]);
+        self.mode = Mode::Signal { sig, verb, signame, pid, name, sel: 0, result };
     }
 
     fn ensure_visible(&mut self) {

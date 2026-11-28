@@ -222,6 +222,31 @@ impl Config {
             }
             s.push_str(&format!("{}=\"{}\"\n", o.key, self.get(o.key)));
         }
-        let _ = std::fs::write(path, s);
+        let _ = std::fs::write(&path, s);
+        fix_sudo_owner(&path);
+    }
+}
+
+/// `sudo rbtop` keeps HOME on macOS (and with `sudo -E` on Linux), so the
+/// config would end up owned by root inside the user's home and later normal
+/// runs could no longer save it. Hand what we created back to the sudo user,
+/// but only when ~/.config itself belongs to that user (never root's own home).
+fn fix_sudo_owner(file: &std::path::Path) {
+    use std::os::unix::fs::MetadataExt;
+    if unsafe { libc::geteuid() } != 0 {
+        return;
+    }
+    let id = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u32>().ok()).filter(|&v| v != 0);
+    let (Some(uid), Some(gid)) = (id("SUDO_UID"), id("SUDO_GID")) else { return };
+    let Some(dir) = file.parent() else { return };
+    let Some(base) = dir.parent() else { return };
+    if std::fs::metadata(base).map(|m| m.uid()).ok() != Some(uid) {
+        return;
+    }
+    for p in [dir.to_path_buf(), dir.join("themes"), file.to_path_buf()] {
+        // lchown semantics: never follow a symlink planted in place of the file
+        if std::fs::symlink_metadata(&p).is_ok_and(|m| m.uid() == 0 && !m.file_type().is_symlink()) {
+            let _ = std::os::unix::fs::lchown(&p, Some(uid), Some(gid));
+        }
     }
 }

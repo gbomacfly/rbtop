@@ -335,11 +335,35 @@ pub fn read_state(pid: i32) -> Option<char> {
     platform::read_state(pid)
 }
 
+/// PID 0 (macOS kernel_task; kill(0, ..) would hit rbtop's own process group)
+/// and PID 1 (init/systemd/launchd, killing it takes the system down) are
+/// never signalled, and neither are negative pids (process groups).
+pub fn signal_allowed(pid: i32) -> bool {
+    pid > 1
+}
+
 pub fn send_signal(pid: i32, sig: i32) -> Result<(), String> {
+    if !signal_allowed(pid) {
+        return Err(format!("refused for pid {pid}"));
+    }
     let r = unsafe { libc::kill(pid, sig) };
     if r == 0 {
         Ok(())
     } else {
         Err(std::io::Error::last_os_error().to_string())
+    }
+}
+
+#[cfg(test)]
+mod signal_tests {
+    use super::*;
+    #[test]
+    fn kernel_and_init_are_protected() {
+        // signal 0 only checks permissions, so this is harmless even if the guard failed
+        for pid in [-1, 0, 1] {
+            assert!(!signal_allowed(pid));
+            assert!(send_signal(pid, 0).is_err());
+        }
+        assert!(send_signal(std::process::id() as i32, 0).is_ok());
     }
 }

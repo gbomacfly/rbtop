@@ -8,13 +8,15 @@ use std::os::unix::fs::MetadataExt;
 pub struct Sampler {
     proc_fd: libc::c_int,
     raw: Vec<u8>,
+    /// lossy copy of a process name that is not valid UTF-8
+    name_buf: String,
     path: String,
     page: u64,
 }
 
 impl Default for Sampler {
     fn default() -> Self {
-        Sampler { proc_fd: -1, raw: vec![0u8; 2048], path: String::with_capacity(32), page: unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as u64 }
+        Sampler { proc_fd: -1, raw: vec![0u8; 2048], name_buf: String::new(), path: String::with_capacity(32), page: unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as u64 }
     }
 }
 
@@ -46,10 +48,24 @@ impl Sampler {
             if n <= 0 {
                 continue;
             }
-            let Ok(stat) = std::str::from_utf8(&self.raw[..n as usize]) else { continue };
-            let (Some(l), Some(r)) = (stat.find('('), stat.rfind(')')) else { continue };
-            let name = &stat[l + 1..r];
-            let mut it = stat[r + 1..].split_ascii_whitespace();
+            // Parse bytes, not str: the name (comm) can be set to arbitrary
+            // bytes with prctl(PR_SET_NAME); rejecting non-UTF-8 would let a
+            // process hide itself from the list.
+            let raw = &self.raw[..n as usize];
+            let (Some(l), Some(r)) = (raw.iter().position(|&c| c == b'('), raw.iter().rposition(|&c| c == b')')) else { continue };
+            if r < l {
+                continue;
+            }
+            let Ok(rest) = std::str::from_utf8(&raw[r + 1..]) else { continue };
+            let name: &str = match std::str::from_utf8(&raw[l + 1..r]) {
+                Ok(s) => s,
+                Err(_) => {
+                    self.name_buf.clear();
+                    self.name_buf.push_str(&String::from_utf8_lossy(&raw[l + 1..r]));
+                    &self.name_buf
+                }
+            };
+            let mut it = rest.split_ascii_whitespace();
             let state = it.next().and_then(|s| s.chars().next()).unwrap_or('?');
             let ppid: i32 = it.next().and_then(|x| x.parse().ok()).unwrap_or(0);
             // fields after ppid: pgrp(0) session tty tpgid flags minflt cminflt majflt cmajflt
@@ -111,8 +127,9 @@ pub fn io_bytes(pid: i32) -> Option<(u64, u64)> {
 }
 
 pub fn read_state(pid: i32) -> Option<char> {
-    let s = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    s[s.rfind(')')? + 1..].split_ascii_whitespace().next()?.chars().next()
+    let b = std::fs::read(format!("/proc/{pid}/stat")).ok()?;
+    let r = b.iter().rposition(|&c| c == b')')?;
+    b[r + 1..].iter().copied().find(|c| !c.is_ascii_whitespace()).map(char::from)
 }
 
 // ------------------------------------------------------------ containers (#97)

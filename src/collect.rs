@@ -392,6 +392,13 @@ pub struct Disks {
 
 const FS_OK: &[&str] = &["ext2", "ext3", "ext4", "xfs", "btrfs", "zfs", "f2fs", "vfat", "exfat", "ntfs", "ntfs3", "fuseblk", "jfs", "reiserfs", "bcachefs", "hfsplus", "apfs"];
 
+/// Internal mounts that are not worth a line: snaps, container layers, /run
+/// (but /run/media/<user>/..., where udisks mounts USB drives, is kept).
+fn skip_mount(mnt: &str) -> bool {
+    let under = |p: &str| mnt == p || mnt.strip_prefix(p).is_some_and(|r| r.starts_with('/'));
+    (under("/run") && !mnt.starts_with("/run/media/")) || under("/snap") || under("/var/lib/docker") || under("/var/lib/containers")
+}
+
 fn unescape_mount(s: &str) -> String {
     s.replace("\\040", " ").replace("\\011", "\t").replace("\\134", "\\")
 }
@@ -435,7 +442,7 @@ impl Disks {
                 continue;
             }
             let mnt = unescape_mount(mnt);
-            if mnt.starts_with("/snap") || mnt.starts_with("/var/lib/docker") || mnt.starts_with("/var/lib/containers") || mnt.starts_with("/run") {
+            if skip_mount(&mnt) {
                 continue;
             }
             if dev.starts_with("/dev/loop") {
@@ -834,8 +841,21 @@ fn spawn_reader(args: &[&str]) -> Option<(libc::pid_t, File)> {
         libc::posix_spawn_file_actions_adddup2(&mut fa, fds[1], 1);
         libc::posix_spawn_file_actions_addopen(&mut fa, 0, c"/dev/null".as_ptr(), libc::O_RDONLY, 0);
         libc::posix_spawn_file_actions_addopen(&mut fa, 2, c"/dev/null".as_ptr(), libc::O_WRONLY, 0);
+        // Rust starts with SIGPIPE ignored and posix_spawn keeps ignored
+        // signals. Reset everything to default (and unblock all) so the child
+        // dies of SIGPIPE when rbtop goes away, instead of lingering forever.
+        let mut attr: libc::posix_spawnattr_t = std::mem::zeroed();
+        libc::posix_spawnattr_init(&mut attr);
+        let mut all: libc::sigset_t = std::mem::zeroed();
+        libc::sigfillset(&mut all);
+        let mut none: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut none);
+        libc::posix_spawnattr_setsigdefault(&mut attr, &all);
+        libc::posix_spawnattr_setsigmask(&mut attr, &none);
+        libc::posix_spawnattr_setflags(&mut attr, (libc::POSIX_SPAWN_SETSIGDEF | libc::POSIX_SPAWN_SETSIGMASK) as libc::c_short);
         let mut pid: libc::pid_t = 0;
-        let r = libc::posix_spawnp(&mut pid, cargs[0].as_ptr(), &fa, std::ptr::null(), argv.as_ptr(), environ as *const *mut libc::c_char);
+        let r = libc::posix_spawnp(&mut pid, cargs[0].as_ptr(), &fa, &attr, argv.as_ptr(), environ as *const *mut libc::c_char);
+        libc::posix_spawnattr_destroy(&mut attr);
         libc::posix_spawn_file_actions_destroy(&mut fa);
         libc::close(fds[1]);
         if r != 0 {
@@ -947,11 +967,22 @@ impl Gpus {
         }
     }
 
+    /// Stop nvidia-smi. Never blocks for long: a child stuck in the driver
+    /// gets SIGKILL after 500 ms, and if even that does not reap it, rbtop
+    /// quits anyway (init adopts and reaps it later).
     pub fn shutdown(&mut self) {
         if let Some(pid) = self.child.take() {
             unsafe {
                 libc::kill(pid, libc::SIGTERM);
-                libc::waitpid(pid, std::ptr::null_mut(), 0);
+                for i in 0..100 {
+                    if libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) != 0 {
+                        return;
+                    }
+                    if i == 50 {
+                        libc::kill(pid, libc::SIGKILL);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
             }
         }
     }
@@ -961,6 +992,16 @@ impl Gpus {
 mod tests {
     use super::*;
     #[test]
+    fn spawned_child_has_default_signals() {
+        // SigIgn of the child must not contain SIGPIPE (bit 13 -> 0x1000)
+        let (pid, mut f) = spawn_reader(&["grep", "^SigIgn", "/proc/self/status"]).expect("spawn grep");
+        let mut s = String::new();
+        let _ = std::io::Read::read_to_string(&mut f, &mut s);
+        unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
+        let mask = u64::from_str_radix(s.trim().trim_start_matches("SigIgn:").trim(), 16).expect("SigIgn line");
+        assert_eq!(mask & (1 << (libc::SIGPIPE - 1)), 0, "{s}");
+    }
+    #[test]
     fn disk_names() {
         assert_eq!(disk_name("/"), "root");
         assert_eq!(disk_name("/mnt/NVME2TB"), "NVME2TB");
@@ -969,5 +1010,11 @@ mod tests {
         assert_eq!(disk_name("/srv/dev-disk-by-id-ata-WDC_WD120"), "ata-WDC_WD120");
         assert!(mount_rank("/mnt/raid") < mount_rank("/srv/dev-disk-by-label-raid"));
         assert!(mount_rank("/data") < mount_rank("/mnt/data/sub"));
+        assert!(skip_mount("/run/user/1000/doc"));
+        assert!(skip_mount("/snap/core/123"));
+        assert!(skip_mount("/var/lib/docker/overlay2/x/merged"));
+        assert!(!skip_mount("/run/media/sascha/USBSTICK"));
+        assert!(!skip_mount("/running"));
+        assert!(!skip_mount("/snapshots"));
     }
 }
