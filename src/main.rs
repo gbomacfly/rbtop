@@ -83,6 +83,9 @@ struct App {
     filter_input: bool,
     /// update_ms at the previous tick (debounces the nvidia-smi restart)
     last_tick_ms: u64,
+    /// next rebuild puts the selection on the first row instead of following
+    /// its pid (the filter text changed: the top of the new list is wanted)
+    sel_to_top: bool,
     rows_dirty: bool,
     mode: Mode,
     buttons: Vec<Button>,
@@ -152,6 +155,7 @@ impl App {
             filter: String::new(),
             filter_input: false,
             last_tick_ms: cfg.update_ms,
+            sel_to_top: false,
             rows_dirty: true,
             mode: Mode::Normal,
             buttons: Vec::new(),
@@ -196,7 +200,7 @@ impl App {
         if self.rows_dirty {
             // The selection follows its process, not its row: after re-sorting,
             // the highlighted (and kill-dialog) target must stay the same pid.
-            let sel_pid = self.sel.and_then(|s| self.procs.rows.get(s)).map(|r| r.pid);
+            let sel_pid = if std::mem::take(&mut self.sel_to_top) { None } else { self.sel.and_then(|s| self.procs.rows.get(s)).map(|r| r.pid) };
             let sel_off = self.sel.map(|s| s.saturating_sub(self.start));
             self.procs.build_rows(&self.cfg.proc_sorting, self.cfg.proc_reversed, self.cfg.proc_tree, &self.filter);
             self.rows_dirty = false;
@@ -1421,6 +1425,7 @@ impl App {
                     self.start = 0;
                     if self.sel.is_some() {
                         self.sel = Some(0);
+                        self.sel_to_top = true;
                     }
                     return;
                 }

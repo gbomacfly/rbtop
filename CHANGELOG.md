@@ -3,6 +3,13 @@
 All notable changes to rbtop. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- Typing into the process filter puts the selection on the first row of the
+  filtered list explicitly; before, it relied on the old top process staying
+  on top, which an update tick between two key presses could change.
+
 ## [0.3.3] - 2026-11-28
 
 Second half of the code audit: the low-priority findings and clean-ups.
@@ -136,6 +143,7 @@ Security and robustness fixes from a full code audit.
   config and theme format, plus the feasible feature requests from the bashtop
   issue tracker (#17, #26/#221, #48, #63, #73, #97, #119, #185, #199).
 
+[Unreleased]: https://github.com/gbomacfly/rbtop/compare/v0.3.3...HEAD
 [0.3.3]: https://github.com/gbomacfly/rbtop/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/gbomacfly/rbtop/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/gbomacfly/rbtop/compare/v0.3.0...v0.3.1
